@@ -27,11 +27,109 @@ def install_ultralytics():
             print("✗ O'rnatib bo'lmadi. Qo'lda o'rnating: pip install ultralytics")
             return False
 
+
+def select_camera_source():
+    """Kamera manbani tanlash"""
+    print("""
+    ╔════════════════════════════════════════════════════════════╗
+    ║              KAMERA MANBANI TANLANG                        ║
+    ╠════════════════════════════════════════════════════════════╣
+    ║                                                            ║
+    ║  [1] Oddiy kamera (Laptop yoki USB kamera)                 ║
+    ║  [2] OBS Virtual Camera (OBS orqali)                       ║
+    ║  [3] Mavjud kameralarni ko'rish                            ║
+    ║                                                            ║
+    ╚════════════════════════════════════════════════════════════╝
+    """)
+    
+    while True:
+        choice = input("Tanlang (1-3): ").strip()
+        
+        if choice == '1':
+            print("\n✓ Oddiy kamera tanlandi (0-index)")
+            return 0
+        
+        elif choice == '2':
+            print("\n✓ OBS Virtual Camera tanlandi")
+            print("   OBS'da Settings → Video → Virtual Camera ishga tushganiga ishonch hosil qiling!")
+            
+            # OBS odatda 1 yoki 2 indexda bo'ladi
+            available, names = list_cameras()
+            
+            if len(available) > 1:
+                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {names.get(available[1], 'Noma\'lum')}")
+                use_suggested = input(f"   Kamera {available[1]} ishlatilsinmi? (y/n): ").strip().lower()
+                if use_suggested == 'y':
+                    return available[1]
+            
+            # Qo'lda tanlash
+            try:
+                camera_index = int(input("   Kamera indexini kiriting (odatda 1 yoki 2): "))
+                return camera_index
+            except:
+                print("✗ Noto'g'ri format!")
+                continue
+        
+        elif choice == '3':
+            available, names = list_cameras()
+            if available:
+                try:
+                    camera_index = int(input("\nQaysi kamerani ishlatmoqchisiz? Index kiriting: "))
+                    if camera_index in available:
+                        print(f"✓ Kamera {camera_index} tanlandi: {names.get(camera_index, 'Kamera')}")
+                        return camera_index
+                    else:
+                        print("✗ Noto'g'ri index!")
+                except:
+                    print("✗ Noto'g'ri format!")
+            continue
+        
+        else:
+            print("✗ Noto'g'ri tanlov! 1, 2 yoki 3 kiriting.")
+
+
+def list_cameras():
+    """Mavjud kameralarni ko'rsatish"""
+    import contextlib
+    
+    print("\n" + "="*60)
+    print("MAVJUD KAMERALAR:")
+    print("="*60)
+    
+    available_cameras = []
+    camera_names = {}
+    
+    # Xato xabarlarini vaqtincha o'chirish
+    with open(os.devnull, 'w') as devnull:
+        with contextlib.redirect_stderr(devnull):
+            for i in range(10):
+                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret:
+                        available_cameras.append(i)
+                        # Kamera nomini taxmin qilish
+                        if i == 0:
+                            camera_names[i] = "Asosiy kamera (Laptop/USB)"
+                        elif i == 1:
+                            camera_names[i] = "OBS Virtual Camera (ehtimol)"
+                        else:
+                            camera_names[i] = f"Kamera {i}"
+                        print(f"  [{i}] {camera_names[i]}")
+                    cap.release()
+    
+    if not available_cameras:
+        print("  Hech qanday kamera topilmadi!")
+    
+    print("="*60 + "\n")
+    return available_cameras, camera_names
+
+
 class SeatMonitor:
     """O'rindiqlarni kuzatish tizimi"""
     
     def __init__(self, config_file='seats_config.json'):
-        self.seats = []  # O'rindiqlar ro'yxati
+        self.seats = []
         self.config_file = config_file
         self.setup_mode = False
         self.temp_points = []
@@ -102,12 +200,12 @@ class SeatMonitor:
             x1, y1, x2, y2 = det['box']
             
             # MUHIM: Odamning pastki markazini tekshirish (oyoqlari bo'lgan joy)
-            bottom_center = [(x1+x2)//2, y2]  # Pastki o'rta nuqta
+            bottom_center = [(x1+x2)//2, y2]
             
             # Qo'shimcha nuqtalar - kengroq tekshirish
             bottom_left = [x1 + (x2-x1)//4, y2]
             bottom_right = [x2 - (x2-x1)//4, y2]
-            mid_bottom = [(x1+x2)//2, y2 - (y2-y1)//4]  # Biroz yuqoriroq
+            mid_bottom = [(x1+x2)//2, y2 - (y2-y1)//4]
             
             # DEBUG: Tekshirilayotgan nuqtalarni saqlash
             det['check_points'] = [bottom_center, bottom_left, bottom_right, mid_bottom]
@@ -115,7 +213,6 @@ class SeatMonitor:
             # Qaysi o'rindiqda ekanligini topish
             found_seat = False
             for seat in self.seats:
-                # Agar pastki nuqtalardan BIRI o'rindiq ichida bo'lsa
                 if (self.point_in_polygon(bottom_center, seat['points']) or 
                     self.point_in_polygon(bottom_left, seat['points']) or
                     self.point_in_polygon(bottom_right, seat['points']) or
@@ -452,7 +549,6 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             cv2.rectangle(overlay, (10, 10), (400, panel_height), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
-            font = cv2.FONT_HERSHEY_SIMPLEX
             cv2.putText(frame, 'XAVFSIZLIK TIZIMI', (20, 35), font, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, f'FPS: {int(fps)}', (20, 60), font, 0.6, (0, 255, 0), 2)
             cv2.putText(frame, f'Band: {occupied_seats} | Bo\'sh: {empty_seats}', 
@@ -475,6 +571,8 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
                 seat_monitor = setup_seats_interactive(camera_index)
                 if seat_monitor and seat_monitor.seats:
                     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                     print("✓ O'rindiqlar yangilandi, monitoring davom etmoqda...")
                 else:
                     print("✗ O'rindiqlar belgilanmadi!")
@@ -495,12 +593,11 @@ if __name__ == "__main__":
     ║                                                            ║
     ║  [1] O'rindiqlarni sozlash/belgilash                       ║
     ║  [2] Monitoring boshlash (o'rindiqlar bilan)               ║
-    ║  [3] Oddiy monitoring (o'rindiqsiz)                        ║
     ║                                                            ║
     ╚════════════════════════════════════════════════════════════╝
     """)
     
-    choice = input("\nTanlang (1-3): ").strip()
+    choice = input("\nTanlang (1-2): ").strip()
     
     if choice == '1':
         # Kamera tanlash
@@ -511,12 +608,6 @@ if __name__ == "__main__":
         # Kamera tanlash
         camera_index = select_camera_source()
         monitoring_with_seats(camera_index=camera_index, confidence_threshold=0.45)
-        
-    elif choice == '3':
-        # Kamera tanlash
-        camera_index = select_camera_source()
-        print("Oddiy monitoring rejimi...")
-        # Sizning asl kodingiz bu yerda
         
     else:
         print("✗ Noto'g'ri tanlov!")
