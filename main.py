@@ -91,7 +91,7 @@ class SeatMonitor:
         return inside
     
     def check_occupancy(self, detections):
-        """Har bir o'rindiqni tekshirish"""
+        """Har bir o'rindiqni tekshirish - DEBUG bilan"""
         # Avval hamma o'rindiqni bo'sh deb belgilaymiz
         for seat in self.seats:
             seat['occupied'] = False
@@ -107,18 +107,29 @@ class SeatMonitor:
             # Qo'shimcha nuqtalar - kengroq tekshirish
             bottom_left = [x1 + (x2-x1)//4, y2]
             bottom_right = [x2 - (x2-x1)//4, y2]
+            mid_bottom = [(x1+x2)//2, y2 - (y2-y1)//4]  # Biroz yuqoriroq
+            
+            # DEBUG: Tekshirilayotgan nuqtalarni saqlash
+            det['check_points'] = [bottom_center, bottom_left, bottom_right, mid_bottom]
             
             # Qaysi o'rindiqda ekanligini topish
+            found_seat = False
             for seat in self.seats:
-                # Agar pastki nuqtalardan biri o'rindiq ichida bo'lsa
+                # Agar pastki nuqtalardan BIRI o'rindiq ichida bo'lsa
                 if (self.point_in_polygon(bottom_center, seat['points']) or 
                     self.point_in_polygon(bottom_left, seat['points']) or
-                    self.point_in_polygon(bottom_right, seat['points'])):
+                    self.point_in_polygon(bottom_right, seat['points']) or
+                    self.point_in_polygon(mid_bottom, seat['points'])):
                     seat['occupied'] = True
                     seat['person_id'] = det_id
+                    found_seat = True
+                    print(f"✓ Odam #{det_id+1} -> {seat['name']}")
                     break
+            
+            if not found_seat:
+                print(f"⚠️ Odam #{det_id+1} hech qaysi o'rindiqda emas! Nuqta: {bottom_center}")
     
-    def draw_seats(self, frame):
+    def draw_seats(self, frame, debug=True):
         """O'rindiqlarni rasmda ko'rsatish"""
         for i, seat in enumerate(self.seats):
             points = np.array(seat['points'], np.int32)
@@ -131,13 +142,21 @@ class SeatMonitor:
                 color = (0, 0, 255)  # Qizil - bo'sh
                 status = "BO'SH"
             
-            # Polygon chizish
-            cv2.polylines(frame, [points], True, color, 2)
+            # Polygon chizish - QALINROQ
+            cv2.polylines(frame, [points], True, color, 3)
             
             # Shaffof to'ldirish
             overlay = frame.copy()
             cv2.fillPoly(overlay, [points], color)
-            cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+            cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
+            
+            # DEBUG: O'rindiq burchaklarini ko'rsatish
+            if debug:
+                for idx, point in enumerate(seat['points']):
+                    cv2.circle(frame, tuple(point), 6, (255, 255, 0), -1)
+                    cv2.circle(frame, tuple(point), 8, (255, 255, 255), 1)
+                    cv2.putText(frame, str(idx+1), (point[0]+10, point[1]-10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
             
             # O'rindiq nomi va holati
             cx = int(np.mean([p[0] for p in seat['points']]))
@@ -147,13 +166,13 @@ class SeatMonitor:
             
             # Matn fonini chizish
             font = cv2.FONT_HERSHEY_SIMPLEX
-            (text_width, text_height), _ = cv2.getTextSize(label, font, 0.6, 2)
+            (text_width, text_height), _ = cv2.getTextSize(label, font, 0.7, 2)
             cv2.rectangle(frame, (cx - text_width//2 - 5, cy - text_height - 5),
                          (cx + text_width//2 + 5, cy + 5), (0, 0, 0), -1)
             
             # Matn
             cv2.putText(frame, label, (cx - text_width//2, cy), 
-                       font, 0.6, (255, 255, 255), 2)
+                       font, 0.7, (255, 255, 255), 2)
 
 
 def setup_seats_interactive(camera_index=0):
@@ -393,23 +412,36 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
                 
                 color = (0, 255, 0) if in_seat else (0, 255, 255)
                 
-                # Odam atrofini chizish
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                # Odam atrofini chizish - QALIN
+                thickness = 3 if in_seat else 2
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                 
-                # Pastki markazga nuqta (tekshirish uchun)
-                cv2.circle(frame, bottom_center, 8, color, -1)
-                cv2.circle(frame, bottom_center, 10, (255, 255, 255), 2)
+                # DEBUG: Barcha tekshirish nuqtalarini ko'rsatish
+                if 'check_points' in det:
+                    for idx, point in enumerate(det['check_points']):
+                        point_color = (0, 255, 0) if in_seat else (0, 0, 255)
+                        cv2.circle(frame, point, 5, point_color, -1)
+                        cv2.circle(frame, point, 7, (255, 255, 255), 1)
+                        # Nuqta raqami
+                        cv2.putText(frame, str(idx+1), (point[0]+10, point[1]), 
+                                   font, 0.4, (255, 255, 255), 1)
+                
+                # Asosiy pastki nuqta - KATTAROQ
+                cv2.circle(frame, bottom_center, 10, color, -1)
+                cv2.circle(frame, bottom_center, 12, (255, 255, 255), 2)
                 
                 # Label
                 if in_seat:
-                    label = f"#{i+1} - {seat_name}"
+                    label = f"#{i+1} - {seat_name} ✓"
+                    bg_color = (0, 200, 0)
                 else:
-                    label = f"#{i+1} - JOYDA EMAS"
+                    label = f"#{i+1} - JOYDA EMAS ✗"
+                    bg_color = (0, 100, 200)
                 
                 # Label foni
                 (text_width, text_height), _ = cv2.getTextSize(label, font, 0.6, 2)
-                cv2.rectangle(frame, (x1, y1-30), (x1 + text_width + 10, y1), (0, 0, 0), -1)
-                cv2.putText(frame, label, (x1+5, y1-10), font, 0.6, color, 2)
+                cv2.rectangle(frame, (x1, y1-35), (x1 + text_width + 10, y1-5), bg_color, -1)
+                cv2.putText(frame, label, (x1+5, y1-15), font, 0.6, (255, 255, 255), 2)
             
             # Statistika paneli
             occupied_seats = sum(1 for seat in seat_monitor.seats if seat['occupied'])
