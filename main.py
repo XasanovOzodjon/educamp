@@ -500,15 +500,23 @@ if __name__ == "__main__":
     ╚════════════════════════════════════════════════════════════╝
     """)
     
-    choice = input("\nTanlang (1-3): ")
+    choice = input("\nTanlang (1-3): ").strip()
     
     if choice == '1':
-        setup_seats_interactive(camera_index=0)
+        # Kamera tanlash
+        camera_index = select_camera_source()
+        setup_seats_interactive(camera_index=camera_index)
+        
     elif choice == '2':
-        monitoring_with_seats(camera_index=0, confidence_threshold=0.45)
+        # Kamera tanlash
+        camera_index = select_camera_source()
+        monitoring_with_seats(camera_index=camera_index, confidence_threshold=0.45)
+        
     elif choice == '3':
-        # Sizning asl kodingiz
-        from ultralytics import YOLO
+        # Kamera tanlash
+        camera_index = select_camera_source()
         print("Oddiy monitoring rejimi...")
+        # Sizning asl kodingiz bu yerda
+        
     else:
-        print("Noto'g'ri tanlov!")
+        print("✗ Noto'g'ri tanlov!")
