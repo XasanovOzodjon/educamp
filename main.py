@@ -57,7 +57,8 @@ def select_camera_source():
             available, names = list_cameras()
             
             if len(available) > 1:
-                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {names.get(available[1], 'Noma\'lum')}")
+                camera_name = names.get(available[1], "Noma'lum")
+                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {camera_name}")
                 use_suggested = input(f"   Kamera {available[1]} ishlatilsinmi? (y/n): ").strip().lower()
                 if use_suggested == 'y':
                     return available[1]
