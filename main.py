@@ -3,6 +3,7 @@ import numpy as np
 import time
 import os
 import glob
+import json
 
 # OpenCV xato xabarlarini yashirish
 os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
@@ -26,149 +27,242 @@ def install_ultralytics():
             print("✗ O'rnatib bo'lmadi. Qo'lda o'rnating: pip install ultralytics")
             return False
 
-def find_all_models(models_folder='models'):
-    """
-    models/ papkasidagi barcha .pt modellarni topish
-    """
-    if not os.path.exists(models_folder):
-        os.makedirs(models_folder)
-        print(f"✓ '{models_folder}' papkasi yaratildi")
-        return []
+class SeatMonitor:
+    """O'rindiqlarni kuzatish tizimi"""
     
-    # Barcha .pt fayllarni topish
-    model_files = glob.glob(os.path.join(models_folder, '*.pt'))
+    def __init__(self, config_file='seats_config.json'):
+        self.seats = []  # O'rindiqlar ro'yxati
+        self.config_file = config_file
+        self.setup_mode = False
+        self.temp_points = []
+        self.current_seat_name = ""
+        self.load_seats()
     
-    models_info = []
-    for model_path in model_files:
-        model_name = os.path.basename(model_path)
-        models_info.append({
-            'name': model_name,
-            'path': model_path,
-            'size': os.path.getsize(model_path) / (1024 * 1024)  # MB
-        })
+    def load_seats(self):
+        """Saqlangan o'rindiqlarni yuklash"""
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.seats = data.get('seats', [])
+                print(f"✓ {len(self.seats)} ta o'rindiq yuklandi")
+            except Exception as e:
+                print(f"✗ Konfiguratsiya yuklanmadi: {e}")
+                self.seats = []
     
-    return models_info
-
-def list_cameras():
-    """Mavjud kameralarni ko'rsatish"""
-    import sys
-    import contextlib
+    def save_seats(self):
+        """O'rindiqlarni saqlash"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump({'seats': self.seats}, f, ensure_ascii=False, indent=2)
+            print(f"✓ {len(self.seats)} ta o'rindiq saqlandi")
+        except Exception as e:
+            print(f"✗ Saqlashda xato: {e}")
     
-    print("\n" + "="*60)
-    print("MAVJUD KAMERALAR:")
-    print("="*60)
+    def add_seat(self, name, points):
+        """Yangi o'rindiq qo'shish"""
+        seat = {
+            'name': name,
+            'points': points,
+            'occupied': False,
+            'person_id': None
+        }
+        self.seats.append(seat)
+        self.save_seats()
     
-    available_cameras = []
-    
-    # Xato xabarlarini vaqtincha o'chirish
-    with open(os.devnull, 'w') as devnull:
-        with contextlib.redirect_stderr(devnull):
-            for i in range(10):
-                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)  # DirectShow backend
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret:
-                        available_cameras.append(i)
-                        print(f"  [{i}] Kamera topildi")
-                    cap.release()
-    
-    if not available_cameras:
-        print("  Hech qanday kamera topilmadi!")
-    
-    print("="*60 + "\n")
-    return available_cameras
-
-
-
-
-def train_new_model(base_model='yolov8n.pt', dataset_path=None, epochs=50, model_name='custom'):
-    """
-    Yangi model train qilish
-    
-    Parameters:
-    - base_model: Boshlang'ich model (yolov8n.pt, yolov8s.pt, ...)
-    - dataset_path: Dataset yo'li (YOLO formatida)
-    - epochs: Necha marta o'rganish
-    - model_name: Model nomi
-    """
-    try:
-        from ultralytics import YOLO
-    except:
-        print("✗ Ultralytics yuklanmadi")
-        return None
-    
-    print("\n" + "="*60)
-    print("YANGI MODEL TRAIN QILISH")
-    print("="*60)
-    
-    if dataset_path is None:
-        print("\n✗ Dataset yo'li ko'rsatilmagan!")
-        print("\nDataset formati (YOLO):")
-        print("  dataset/")
-        print("    ├── images/")
-        print("    │   ├── train/")
-        print("    │   └── val/")
-        print("    ├── labels/")
-        print("    │   ├── train/")
-        print("    │   └── val/")
-        print("    └── data.yaml")
-        return None
-    
-    print(f"\nBase model: {base_model}")
-    print(f"Dataset: {dataset_path}")
-    print(f"Epochs: {epochs}")
-    print(f"Model nomi: {model_name}")
-    
-    try:
-        # Modelni yuklash
-        model = YOLO(base_model)
+    def point_in_polygon(self, point, polygon):
+        """Nuqta polygon ichidami tekshirish"""
+        x, y = point
+        n = len(polygon)
+        inside = False
         
-        # Train qilish
-        print("\n🚀 Training boshlandi...")
-        results = model.train(
-            data=dataset_path,
-            epochs=epochs,
-            imgsz=640,
-            batch=16,
-            name=model_name,
-            patience=10,
-            save=True,
-            device='cpu'  # GPU bo'lsa 'cuda' yoki 0
-        )
+        p1x, p1y = polygon[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
         
-        # Modelni saqlash
-        output_path = f'models/{model_name}.pt'
-        os.makedirs('models', exist_ok=True)
-        
-        best_model_path = f'runs/detect/{model_name}/weights/best.pt'
-        if os.path.exists(best_model_path):
-            import shutil
-            shutil.copy(best_model_path, output_path)
-            print(f"\n✓ Model saqlandi: {output_path}")
-            return output_path
-        
-    except Exception as e:
-        print(f"\n✗ Training xatosi: {e}")
-        return None
-
-
-def auto_ensemble_detection(camera_index=None, models_folder='models', confidence_threshold=0.45, max_models=5):
-    """
-    AVTOMATIK ENSEMBLE - KUCHAYTIRILGAN VERSIYA
-    Ko'proq model + Optimizatsiya + GPU support = Kuchliroq AI!
+        return inside
     
-    Parameters:
-    - camera_index: Kamera raqami
-    - models_folder: Modellar saqlanadigan papka
-    - confidence_threshold: Aniqlik chegarasi (0.45 - kam xato, faqat odamlar)
-    - max_models: Maksimal ishlatish uchun modellar (5-7 optimal)
-    """
+    def check_occupancy(self, detections):
+        """Har bir o'rindiqni tekshirish"""
+        # Avval hamma o'rindiqni bo'sh deb belgilaymiz
+        for seat in self.seats:
+            seat['occupied'] = False
+            seat['person_id'] = None
+        
+        # Har bir aniqlangan odamni tekshirish
+        for det_id, det in enumerate(detections):
+            center = det['center']
+            
+            # Qaysi o'rindiqda ekanligini topish
+            for seat in self.seats:
+                if self.point_in_polygon(center, seat['points']):
+                    seat['occupied'] = True
+                    seat['person_id'] = det_id
+                    break
+    
+    def draw_seats(self, frame):
+        """O'rindiqlarni rasmda ko'rsatish"""
+        for i, seat in enumerate(self.seats):
+            points = np.array(seat['points'], np.int32)
+            
+            # Rang tanlash
+            if seat['occupied']:
+                color = (0, 255, 0)  # Yashil - band
+                status = "BAND"
+            else:
+                color = (0, 0, 255)  # Qizil - bo'sh
+                status = "BO'SH"
+            
+            # Polygon chizish
+            cv2.polylines(frame, [points], True, color, 2)
+            
+            # Shaffof to'ldirish
+            overlay = frame.copy()
+            cv2.fillPoly(overlay, [points], color)
+            cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+            
+            # O'rindiq nomi va holati
+            cx = int(np.mean([p[0] for p in seat['points']]))
+            cy = int(np.mean([p[1] for p in seat['points']]))
+            
+            label = f"{seat['name']}: {status}"
+            
+            # Matn fonini chizish
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            (text_width, text_height), _ = cv2.getTextSize(label, font, 0.6, 2)
+            cv2.rectangle(frame, (cx - text_width//2 - 5, cy - text_height - 5),
+                         (cx + text_width//2 + 5, cy + 5), (0, 0, 0), -1)
+            
+            # Matn
+            cv2.putText(frame, label, (cx - text_width//2, cy), 
+                       font, 0.6, (255, 255, 255), 2)
+
+
+def setup_seats_interactive(camera_index=0):
+    """Interaktiv o'rindiqlarni sozlash"""
     
     print("""
-    ╔════════════════════════════════════════════════════════╗
-    ║     AUTO-ENSEMBLE AI - KUCHAYTIRILGAN TIZIM ⚡️        ║
-    ║     (5+ Model + GPU + HD = SUPER AI! 🚀)              ║
-    ╚════════════════════════════════════════════════════════╝
+    ╔════════════════════════════════════════════════════════════╗
+    ║           O'RINDIQLARNI BELGILASH REJIMI                   ║
+    ╠════════════════════════════════════════════════════════════╣
+    ║                                                            ║
+    ║  QANDAY ISHLAYDI:                                          ║
+    ║                                                            ║
+    ║  1. Videoda o'rindiq burchaklarini sichqoncha bilan        ║
+    ║     bosing (4 ta nuqta)                                    ║
+    ║                                                            ║
+    ║  2. 4-nuqtadan keyin o'rindiq nomini kiriting              ║
+    ║     (masalan: "1-qator 1-o'rin")                           ║
+    ║                                                            ║
+    ║  3. Keyingi o'rindiqni belgilang                           ║
+    ║                                                            ║
+    ║  4. 's' tugmasini bosing - saqlash                         ║
+    ║     'c' tugmasini bosing - oxirgi o'rindiqni o'chirish     ║
+    ║     'r' tugmasini bosing - barchasini tozalash             ║
+    ║     'q' tugmasini bosing - chiqish                         ║
+    ║                                                            ║
+    ╚════════════════════════════════════════════════════════════╝
+    """)
+    
+    seat_monitor = SeatMonitor()
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    
+    if not cap.isOpened():
+        print(f"✗ Kamera {camera_index} ochilmadi!")
+        return None
+    
+    temp_points = []
+    current_name = ""
+    
+    def mouse_callback(event, x, y, flags, param):
+        nonlocal temp_points, current_name
+        
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if len(temp_points) < 4:
+                temp_points.append([x, y])
+                print(f"Nuqta {len(temp_points)}: ({x}, {y})")
+                
+                if len(temp_points) == 4:
+                    print("\n4 ta nuqta belgilandi!")
+                    current_name = input("O'rindiq nomini kiriting: ")
+                    seat_monitor.add_seat(current_name, temp_points)
+                    print(f"✓ '{current_name}' qo'shildi!")
+                    temp_points = []
+    
+    cv2.namedWindow('O\'rindiqlarni Belgilash')
+    cv2.setMouseCallback('O\'rindiqlarni Belgilash', mouse_callback)
+    
+    print("\n✓ O'rindiqlarni belgilashni boshlang...")
+    print("Har bir o'rindiq uchun 4 ta burchakni belgilang\n")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Saqlangan o'rindiqlarni ko'rsatish
+        seat_monitor.draw_seats(frame)
+        
+        # Joriy belgilanayotgan nuqtalarni ko'rsatish
+        for i, point in enumerate(temp_points):
+            cv2.circle(frame, tuple(point), 5, (255, 0, 0), -1)
+            cv2.putText(frame, str(i+1), (point[0]+10, point[1]), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        
+        # Chiziqlarni ko'rsatish
+        if len(temp_points) > 1:
+            for i in range(len(temp_points)-1):
+                cv2.line(frame, tuple(temp_points[i]), tuple(temp_points[i+1]), 
+                        (255, 0, 0), 2)
+            if len(temp_points) == 4:
+                cv2.line(frame, tuple(temp_points[3]), tuple(temp_points[0]), 
+                        (255, 0, 0), 2)
+        
+        # Ma'lumot paneli
+        info = f"O'rindiqlar: {len(seat_monitor.seats)} | Joriy nuqtalar: {len(temp_points)}/4"
+        cv2.putText(frame, info, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        cv2.imshow('O\'rindiqlarni Belgilash', frame)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('c'):
+            if seat_monitor.seats:
+                removed = seat_monitor.seats.pop()
+                seat_monitor.save_seats()
+                print(f"✓ '{removed['name']}' o'chirildi")
+        elif key == ord('r'):
+            seat_monitor.seats = []
+            seat_monitor.save_seats()
+            temp_points = []
+            print("✓ Barcha o'rindiqlar tozalandi")
+        elif key == ord('s'):
+            print(f"\n✓ {len(seat_monitor.seats)} ta o'rindiq saqlandi!")
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    
+    return seat_monitor
+
+
+def monitoring_with_seats(camera_index=0, models_folder='models', confidence_threshold=0.45):
+    """O'rindiqlarni kuzatish bilan monitoring"""
+    
+    print("""
+    ╔════════════════════════════════════════════════════════════╗
+    ║         MAKTAB VIDEO XAVFSIZLIK TIZIMI                     ║
+    ║         O'rindiq Kuzatuvi + AI Detection                   ║
+    ╚════════════════════════════════════════════════════════════╝
     """)
     
     # Ultralytics o'rnatish
@@ -181,156 +275,55 @@ def auto_ensemble_detection(camera_index=None, models_folder='models', confidenc
         print("✗ Ultralytics import qilinmadi.")
         return
     
-    # Barcha modellarni topish
-    print(f"\n{'='*60}")
-    print(f"'{models_folder}/' PAPKASIDAGI MODELLAR:")
-    print(f"{'='*60}")
+    # O'rindiqlar kuzatuvchisini yuklash
+    seat_monitor = SeatMonitor()
     
-    custom_models = find_all_models(models_folder)
-    
-    if not custom_models:
-        print(f"\n⚠️ '{models_folder}/' papkasida hech qanday model topilmadi!")
-        print("\nStandard YOLOv8 modellaridan foydalanamiz...")
-        
-        # Default modellar (turli o'lchamlarda - kuchli ensemble uchun)
-        default_models = ['yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt', 'yolov8x.pt']
-        print(f"\nDefault modellar yuklanmoqda: {', '.join(default_models[:max_models])}")
-        
-        models = {}
-        for model_file in default_models[:max_models]:
-            try:
-                model_name = model_file.replace('.pt', '')
-                models[model_name] = YOLO(model_file)
-                print(f"✓ {model_file} yuklandi")
-            except Exception as e:
-                print(f"✗ {model_file} yuklanmadi: {e}")
-    else:
-        print(f"\n✓ {len(custom_models)} ta custom model topildi!")
-        
-        # HAR XIL O'LCHAMDAGI modellarni tanlash (kuchli ensemble uchun)
-        # Kichik, o'rta va katta modellarni aralashtirish
-        custom_models_sorted = sorted(custom_models, key=lambda x: x['size'])
-        
-        # Strategik tanlash: kichik, o'rta, katta modellar
-        selected_models = []
-        if len(custom_models_sorted) <= max_models:
-            selected_models = custom_models_sorted
+    if not seat_monitor.seats:
+        print("\n⚠️ O'rindiqlar belgilanmagan!")
+        choice = input("O'rindiqlarni hozir belgilaysizmi? (y/n): ")
+        if choice.lower() == 'y':
+            seat_monitor = setup_seats_interactive(camera_index)
+            if not seat_monitor or not seat_monitor.seats:
+                print("✗ O'rindiqlar belgilanmadi!")
+                return
         else:
-            # Kichikdan kattaga teng taqsimlash
-            step = len(custom_models_sorted) / max_models
-            for i in range(max_models):
-                idx = int(i * step)
-                selected_models.append(custom_models_sorted[idx])
-        
-        custom_models = selected_models
-        print(f"✓ KUCHLI ENSEMBLE: {len(custom_models)} xil o'lchamdagi model:\n")
-        
-        for i, model_info in enumerate(custom_models, 1):
-            print(f"  [{i}] {model_info['name']}")
-            print(f"      O'lcham: {model_info['size']:.2f} MB")
-            print()
-        
-        # Modellarni yuklash
-        print("Modellar yuklanmoqda...")
-        models = {}
-        
-        for model_info in custom_models:
-            try:
-                model_name = model_info['name'].replace('.pt', '')
-                models[model_name] = YOLO(model_info['path'])
-                print(f"✓ {model_info['name']} yuklandi")
-            except Exception as e:
-                print(f"✗ {model_info['name']} yuklanmadi: {e}")
+            print("✗ O'rindiqlar kerak! Dastur to'xtatildi.")
+            return
     
-    if not models:
-        print("\n✗ Hech qanday model yuklanmadi!")
+    # Modellarni yuklash
+    print("\nModellar yuklanmoqda...")
+    models = {}
+    
+    # Default model
+    try:
+        models['yolov8n'] = YOLO('yolov8n.pt')
+        print("✓ yolov8n.pt yuklandi")
+    except Exception as e:
+        print(f"✗ Model yuklanmadi: {e}")
         return
     
-    print(f"\n✓ Jami {len(models)} ta model tayyor!")
-    print(f"✓ Ensemble aqli: {len(models)} x kuchaytirilgan!\n")
-    
-    # Kameralarni ko'rsatish
-    available = list_cameras()
-    
-    if camera_index is None:
-        if not available:
-            print("✗ Kamera topilmadi!")
-            return
-        
-        print("Qaysi kamerani ishlatmoqchisiz?")
-        for cam in available:
-            print(f"  {cam} - Kamera {cam}")
-        
-        try:
-
-            camera_index = int(input("\nKamera raqamini kiriting (OBS uchun 1 yoki 2): "))
-        except:
-            camera_index = available[0]
-    
-    # GPU mavjudligini tekshirish
-    import torch
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    gpu_info = f" [{torch.cuda.get_device_name(0)}]" if device == 'cuda' else ""
-    
-    # Image size - FPS uchun optimizatsiya qilingan
-    img_size = 480 if device == 'cuda' else 384
-    
-    print(f"\n⚡️ Device: {device.upper()}{gpu_info}")
-    
-    # Kamerani ochish (DirectShow backend - Windows uchun optimal)
+    # Kamerani ochish
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    # OPTIMAL O'LCHAM - FPS va sifat balansi
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
-    cap.set(cv2.CAP_PROP_FPS, 30)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Buffer kichraytirish
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
     if not cap.isOpened():
-        print(f"\n✗ Kamera {camera_index} ochilmadi!")
+        print(f"✗ Kamera {camera_index} ochilmadi!")
         return
     
     print("\n" + "="*60)
-    print("✓ KUCHAYTIRILGAN AUTO-ENSEMBLE AI! ⚡️🚀")
+    print("✓ MAKTAB XAVFSIZLIK TIZIMI ISHGA TUSHDI!")
     print("="*60)
-    print(f"Modellar soni: {len(models)} ta {'⭐️' * min(len(models), 5)}")
-    print(f"Resolution: {cap.get(cv2.CAP_PROP_FRAME_WIDTH):.0f}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT):.0f}")
-    print(f"Image Size: {img_size}px (aniqlik: HIGH)")
-    print(f"Confidence: {int(confidence_threshold * 100)}%")
-    print(f"Device: {device.upper()}{gpu_info}")
-    print(f"Rejim: NAVBAT ENSEMBLE (har model navbatda)")
+    print(f"O'rindiqlar: {len(seat_monitor.seats)} ta")
+    print(f"Kamera: {camera_index}")
     print("\nTugmalar:")
     print("  'q' - To'xtatish")
-    print("  '+/-' - Aniqlik sozlash")
-    print("  'i' - Info panel (on/off)")
-    print("  'r' - Reload modellar")
-    print("  'f' - Frame skip (NORMAL/FAST/ULTRA)")
+    print("  's' - Screenshot olish")
+    print("  'e' - O'rindiqlarni qayta sozlash")
     print("="*60 + "\n")
     
     prev_time = 0
-    show_info = True
-    frame_count = 0
-    
-    # TEZLASHTIRISH: Frame skipping (1 = har frame)
-    skip_frames = 1  # Har frameni tekshirish (yuqori sifat)
-    frame_skip_counter = 0
-    
-    # Modellar navbati (4 ta yengil model - tezlik uchun)
-    model_keys = list(models.keys())[:4]  # Faqat 4 ta eng yengil
-    current_model_index = 0
-    
-    # Har bir modeldan oxirgi natijalarni saqlash
-    model_results = {key: [] for key in model_keys}
-    
-    # Har bir detection uchun timestamp
-    detection_timestamps = {key: 0 for key in model_keys}
-    detection_timeout = 0.2  # 0.2 sekund - agar detection yangilanmasa, o'chirish
-    
-    # Oxirgi natija
-    last_merged = []
-    
-    # Ranglar
-    np.random.seed(42)
-    colors = {}
+    model = models['yolov8n']
     
     try:
         while True:
@@ -338,313 +331,124 @@ def auto_ensemble_detection(camera_index=None, models_folder='models', confidenc
             if not ret:
                 break
             
-            frame_count += 1
-            frame_skip_counter += 1
-            height, width = frame.shape[:2]
-            
             # FPS hisoblash
             curr_time = time.time()
             fps = 1 / (curr_time - prev_time) if prev_time != 0 else 0
             prev_time = curr_time
             
-            # FRAME SKIPPING - har N-framedan 1 tasini tekshirish
-            if frame_skip_counter >= skip_frames:
-                frame_skip_counter = 0
-                
-                # FAQAT bitta modelni ishlatish (navbat bilan)
-                current_model_key = model_keys[current_model_index]
-                current_model = models[current_model_key]
-                
-                # YUQORI SIFAT - faqat ishonchli detectionlar
-                results = current_model(frame, conf=confidence_threshold, classes=[0], 
-                                       verbose=False, imgsz=img_size, device=device,
-                                       iou=0.45, agnostic_nms=True, max_det=50)
-                boxes = results[0].boxes
-                
-                # Shu modelning natijalarini yangilash
-                model_results[current_model_key] = []
-                detection_timestamps[current_model_key] = curr_time  # Timestamp yangilash
-                
-                for box in boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    conf = float(box.conf[0])
-
-                    model_results[current_model_key].append({
-                        'box': [x1, y1, x2, y2],
-                        'confidence': conf,
-                        'model': current_model_key,
-                        'center': [(x1+x2)//2, (y1+y2)//2],
-                        'timestamp': curr_time
-                    })
-                
-                # Keyingi modelga o'tish
-                current_model_index = (current_model_index + 1) % len(model_keys)
-                
-                # ESKI NATIJALARNI TOZALASH - faqat yangi detectionlarni qoldirish
-                all_detections = []
-                for model_key in model_keys:
-                    # Agar model oxirgi 0.5 sekundda yangilangan bo'lsa
-                    if curr_time - detection_timestamps.get(model_key, 0) < detection_timeout:
-                        all_detections.extend(model_results[model_key])
-                    else:
-                        # Eski natijalarni tozalash
-                        model_results[model_key] = []
-                
-                # Birlashtirilgan natija
-                if all_detections:
-                    last_merged = merge_detections(all_detections)
+            # YOLO detection
+            results = model(frame, conf=confidence_threshold, classes=[0], 
+                           verbose=False, device='cpu')
+            boxes = results[0].boxes
             
-            people_count = len(last_merged)
+            detections = []
+            for box in boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+                center = [(x1+x2)//2, (y1+y2)//2]
+                
+                detections.append({
+                    'box': [x1, y1, x2, y2],
+                    'confidence': conf,
+                    'center': center
+                })
+            
+            # O'rindiqlarni tekshirish
+            seat_monitor.check_occupancy(detections)
+            
+            # O'rindiqlarni chizish
+            seat_monitor.draw_seats(frame)
             
             # Aniqlangan odamlarni chizish
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            for i, det in enumerate(last_merged):
+            for i, det in enumerate(detections):
                 x1, y1, x2, y2 = det['box']
                 conf = det['confidence']
-                votes = det.get('votes', 1)
+                center = det['center']
                 
-                # Rang
-                if i not in colors:
-                    colors[i] = (
-                        np.random.randint(100, 255),
-                        np.random.randint(100, 255),
-                        np.random.randint(100, 255)
-                    )
-                color = colors[i]
+                # Rangni aniqlash (o'rindiqda bo'lsa yashil, bo'lmasa sariq)
+                in_seat = False
+                for seat in seat_monitor.seats:
+                    if seat['person_id'] == i:
+                        in_seat = True
+                        break
                 
-                # To'rtburchak - qalinlik ovoz soniga bog'liq
-                thickness = min(2 + votes, 6)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+                color = (0, 255, 0) if in_seat else (0, 255, 255)
+                
+                # Odam atrofini chizish
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.circle(frame, center, 5, color, -1)
                 
                 # Label
-                if votes > 1:
-                    label = f"#{i+1} {int(conf * 100)}% [{votes} models]"
-                else:
-                    label = f"#{i+1} {int(conf * 100)}%"
-                
-                # Label fon
-                label_size, _ = cv2.getTextSize(label, font, 0.5, 2)
-                cv2.rectangle(frame, (x1, y1 - 25), (x1 + label_size[0] + 10, y1), color, -1)
-                
-                # Label matn
-                cv2.putText(frame, label, (x1 + 5, y1 - 6), font, 0.5, (255, 255, 255), 2)
-                
-                # Markazga nuqta - o'lcham ovoz soniga bog'liq
-                point_size = 3 + votes
-                cv2.circle(frame, det['center'], point_size, color, -1)
+                label = f"#{i+1} {int(conf*100)}%"
+                cv2.putText(frame, label, (x1, y1-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
-            # Info panel (sodda versiya - tezroq)
-            if show_info:
-                panel_width = 420
-                panel_height = 180
-                
-                overlay = frame.copy()
-                cv2.rectangle(overlay, (10, 10), (panel_width, panel_height), (0, 0, 0), -1)
-                cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-                
-                y_pos = 35
-                cv2.putText(frame, 'AUTO-ENSEMBLE', 
-                           (20, y_pos), font, 0.7, (255, 255, 255), 2)
-                y_pos += 32
-                
-                # FPS
-                fps_color = (0, 255, 0) if fps > 15 else (0, 255, 255) if fps > 10 else (255, 100, 100)
-                cv2.putText(frame, f'FPS: {int(fps)}', 
-                           (20, y_pos), font, 0.9, fps_color, 2)
-                y_pos += 32
-                
-                # Odamlar
-                cv2.putText(frame, f'Odamlar: {people_count}', 
-                           (20, y_pos), font, 0.8, (0, 255, 0), 2)
-                y_pos += 28
-                
-                # Modellar
-                stars = '⭐️' * min(len(models), 5)
-                cv2.putText(frame, f'{stars} {len(models)} models',
-
-                           (20, y_pos), font, 0.6, (255, 215, 0), 2)
-                y_pos += 25
-                
-                # Device
-                device_text = f'GPU: {device.upper()}' if device == 'cuda' else 'CPU Mode'
-                device_color = (0, 255, 0) if device == 'cuda' else (100, 150, 255)
-                cv2.putText(frame, device_text, 
-                           (20, y_pos), font, 0.5, device_color, 1)
-                y_pos += 20
-                
-                # Skip mode
-                skip_mode = "NORMAL" if skip_frames == 1 else "FAST" if skip_frames == 2 else "ULTRA"
-                cv2.putText(frame, f'Mode: {skip_mode} | ImgSz: {img_size}', 
-                           (20, y_pos), font, 0.5, (100, 200, 255), 1)
-            else:
-                cv2.putText(frame, f'FPS: {int(fps)} | Odamlar: {people_count} | Models: {len(models)}', 
-                           (10, 30), font, 0.6, (0, 255, 0), 2)
+            # Statistika paneli
+            occupied_seats = sum(1 for seat in seat_monitor.seats if seat['occupied'])
+            empty_seats = len(seat_monitor.seats) - occupied_seats
             
-            # Oyna
-            window_title = f'SUPER AI ⚡️ - {len(models)} Models | {device.upper()} | HD'
-            cv2.imshow(window_title, frame)
+            panel_height = 120
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (10, 10), (400, panel_height), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
-            # Tugmalar
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(frame, 'XAVFSIZLIK TIZIMI', (20, 35), font, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, f'FPS: {int(fps)}', (20, 60), font, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, f'Band: {occupied_seats} | Bo\'sh: {empty_seats}', 
+                       (20, 85), font, 0.6, (255, 255, 0), 2)
+            cv2.putText(frame, f'Jami: {len(detections)} kishi', 
+                       (20, 110), font, 0.6, (255, 100, 100), 2)
+            
+            cv2.imshow('Maktab Xavfsizlik Tizimi', frame)
+            
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                print("\n✓ Dastur to'xtatildi.")
                 break
-            elif key == ord('+') or key == ord('='):
-                confidence_threshold = min(0.95, confidence_threshold + 0.02)
-                print(f"Aniqlik oshirildi: {int(confidence_threshold * 100)}%")
-            elif key == ord('-') or key == ord('_'):
-                confidence_threshold = max(0.20, confidence_threshold - 0.02)
-                print(f"Aniqlik kamaytirildi: {int(confidence_threshold * 100)}%")
-            elif key == ord('i'):
-                show_info = not show_info
-            elif key == ord('r'):
-                print("\n♻️ Modellar qayta yuklanmoqda...")
+            elif key == ord('s'):
+                filename = f'screenshot_{time.strftime("%Y%m%d_%H%M%S")}.jpg'
+                cv2.imwrite(filename, frame)
+                print(f"✓ Screenshot saqlandi: {filename}")
+            elif key == ord('e'):
                 cap.release()
                 cv2.destroyAllWindows()
-                auto_ensemble_detection(camera_index, models_folder, confidence_threshold, max_models)
-                return
-            elif key == ord('f'):
-                # Frame skip rejimini o'zgartirish
-                if skip_frames == 1:
-                    skip_frames = 2
-                    print("Rejim: FAST (har 2-frame) - 2x tezroq")
-                elif skip_frames == 2:
-                    skip_frames = 3
-                    print("Rejim: ULTRA (har 3-frame) - 3x tezroq")
+                seat_monitor = setup_seats_interactive(camera_index)
+                if seat_monitor and seat_monitor.seats:
+                    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+                    print("✓ O'rindiqlar yangilandi, monitoring davom etmoqda...")
                 else:
-                    skip_frames = 1
-                    print("Rejim: NORMAL (har frame) - yuqori sifat")
+                    print("✗ O'rindiqlar belgilanmadi!")
+                    return
     
     except KeyboardInterrupt:
         print("\n✓ Dastur to'xtatildi.")
-    except Exception as e:
-        print(f"\n✗ XATOLIK: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
         cap.release()
         cv2.destroyAllWindows()
-        print("✓ Resurslar bo'shatildi.")
-
-
-def merge_detections(detections, iou_threshold=0.50):
-    """Detections ni birlashtirish - aniqroq
-    
-    IoU threshold 0.50 - faqat juda yaqin detectionlarni birlashtirish,
-    har bir odam alohida = aniqroq hisob
-    """
-    if not detections:
-        return []
-    
-    detections = sorted(detections, key=lambda x: x['confidence'], reverse=True)
-    
-    merged = []
-    used = [False] * len(detections)
-    
-    for i, det1 in enumerate(detections):
-        if used[i]:
-            continue
-        
-        group = [det1]
-        used[i] = True
-        
-        for j, det2 in enumerate(detections[i+1:], i+1):
-            if used[j]:
-                continue
-            
-            iou = calculate_iou(det1['box'], det2['box'])
-            
-            if iou > iou_threshold:
-                group.append(det2)
-                used[j] = True
-        
-        if group:
-            avg_box = average_boxes([d['box'] for d in group])
-            avg_conf = sum([d['confidence'] for d in group]) / len(group)
-            
-            merged.append({
-                'box': avg_box,
-                'confidence': avg_conf,
-                'votes': len(group),
-                'center': [(avg_box[0]+avg_box[2])//2, (avg_box[1]+avg_box[3])//2]
-            })
-    
-    return merged
-
-def calculate_iou(box1, box2):
-    """IoU hisoblash"""
-    x1_min, y1_min, x1_max, y1_max = box1
-    x2_min, y2_min, x2_max, y2_max = box2
-    
-    x_min = max(x1_min, x2_min)
-    y_min = max(y1_min, y2_min)
-    x_max = min(x1_max, x2_max)
-    y_max = min(y1_max, y2_max)
-    
-    if x_max < x_min or y_max < y_min:
-        return 0.0
-    
-    intersection = (x_max - x_min) * (y_max - y_min)
-    area1 = (x1_max - x1_min) * (y1_max - y1_min)
-    area2 = (x2_max - x2_min) * (y2_max - y2_min)
-    union = area1 + area2 - intersection
-    
-    return intersection / union if union > 0 else 0.0
-
-def average_boxes(boxes):
-    """O'rtacha box"""
-    x1 = int(sum([b[0] for b in boxes]) / len(boxes))
-    y1 = int(sum([b[1] for b in boxes]) / len(boxes))
-    x2 = int(sum([b[2] for b in boxes]) / len(boxes))
-    y2 = int(sum([b[3] for b in boxes]) / len(boxes))
-    return [x1, y1, x2, y2]
 
 
 if __name__ == "__main__":
     print("""
     ╔════════════════════════════════════════════════════════════╗
-    ║         AUTO-ENSEMBLE AI - O'ZINI O'RGANGAN TIZIM          ║
+    ║       MAKTAB VIDEO XAVFSIZLIK TIZIMI - MENYU               ║
     ╠════════════════════════════════════════════════════════════╣
     ║                                                            ║
-    ║  QANDAY ISHLAYDI:                                          ║
-    ║                                                            ║
-    ║  1. 'models/' papkasiga .pt modellarni qo'shing            ║
-    ║  2. Dastur avtomatik barcha modellarni topadi              ║
-    ║  3. Har bir model navbat bilan ishlaydi                    ║
-    ║  4. Natijalar birlashtiriladi                              ║
-    ║  5. Ko'proq model = aqlliroq AI! ⭐️⭐️⭐️⭐️⭐️                 ║
-    ║                                                            ║
-    ║  O'Z MODELINGIZNI QANDAY YARATISH:                         ║
-    ║                                                            ║
-    ║  1. Dataset tayyorlang (YOLO formatida):                   ║
-    ║     • Rasmlar va labellar                                  ║
-    ║     • train/ va val/ bo'limlari                            ║
-    ║                                                            ║
-    ║  2. Model train qiling:                                    ║
-    ║     from main import train_new_model                       ║
-    ║     train_new_model(                                       ║
-    ║         base_model='yolov8n.pt',                           ║
-    ║         dataset_path='data.yaml',                          ║
-    ║         epochs=50,                                         ║
-    ║         model_name='my_custom_model'                       ║
-    ║     )                                                      ║
-    ║                                                            ║
-    ║  3. Yangi model avtomatik 'models/' ga saqlanadi           ║
-    ║                                                            ║
-    ║  4. Dastur qayta ishga tushganda yangi modelni            ║
-    ║     avtomatik topadi va ishlatadi!                         ║
-    ║                                                            ║
-    ║  MASLAHAT:                                                 ║
-    ║  • Har xil datasetlarda train qiling                       ║
-    ║  • Har xil base modellardan foydalaning                    ║
-    ║  • 3-5 ta model = optimal                                  ║
+    ║  [1] O'rindiqlarni sozlash/belgilash                       ║
+    ║  [2] Monitoring boshlash (o'rindiqlar bilan)               ║
+    ║  [3] Oddiy monitoring (o'rindiqsiz)                        ║
     ║                                                            ║
     ╚════════════════════════════════════════════════════════════╝
     """)
     
-    # Auto-ensemble tizimini ishga tushirish
-    # max_models=5 - 5 ta har xil o'lchamdagi model (kuchli ensemble uchun)
-    # confidence=0.45 - faqat ishonchli detectionlar (kam xato)
-    auto_ensemble_detection(models_folder='models', confidence_threshold=0.45, max_models=5)
+    choice = input("\nTanlang (1-3): ")
     
-    #salom
+    if choice == '1':
+        setup_seats_interactive(camera_index=0)
+    elif choice == '2':
+        monitoring_with_seats(camera_index=0, confidence_threshold=0.45)
+    elif choice == '3':
+        # Sizning asl kodingiz
+        from ultralytics import YOLO
+        print("Oddiy monitoring rejimi...")
+    else:
+        print("Noto'g'ri tanlov!")
