@@ -55,9 +55,9 @@ def select_camera_source():
             
             # OBS odatda 1 yoki 2 indexda bo'ladi
             available, names = list_cameras()
+            
             if len(available) > 1:
-                camera_name = names.get(available[1], "Noma'lum")
-                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {camera_name}")
+                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {names.get(available[1], 'Noma\'lum')}")
                 use_suggested = input(f"   Kamera {available[1]} ishlatilsinmi? (y/n): ").strip().lower()
                 if use_suggested == 'y':
                     return available[1]
@@ -450,11 +450,14 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
     print("  'q' - To'xtatish")
     print("  's' - Screenshot olish")
     print("  'e' - O'rindiqlarni qayta sozlash")
+    print("  '+' - Aniqlikni oshirish (kam xato, qattiqroq)")
+    print("  '-' - Aniqlikni kamaytirish (ko'proq aniqlash)")
     print("="*60 + "\n")
     
     prev_time = 0
     model = models['yolov8n']
     font = cv2.FONT_HERSHEY_SIMPLEX
+    current_confidence = confidence_threshold
     
     try:
         while True:
@@ -467,8 +470,8 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             fps = 1 / (curr_time - prev_time) if prev_time != 0 else 0
             prev_time = curr_time
             
-            # YOLO detection
-            results = model(frame, conf=confidence_threshold, classes=[0], 
+            # YOLO detection - REAL VAQT ANIQLIK
+            results = model(frame, conf=current_confidence, classes=[0], 
                            verbose=False, device='cpu')
             boxes = results[0].boxes
             
@@ -529,10 +532,10 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
                 
                 # Label
                 if in_seat:
-                    label = f"#{i+1} - {seat_name} ✓"
+                    label = f"#{i+1} - {seat_name} ({int(conf*100)}%)"
                     bg_color = (0, 200, 0)
                 else:
-                    label = f"#{i+1} - JOYDA EMAS ✗"
+                    label = f"#{i+1} - JOYDA EMAS ({int(conf*100)}%)"
                     bg_color = (0, 100, 200)
                 
                 # Label foni
@@ -544,9 +547,9 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             occupied_seats = sum(1 for seat in seat_monitor.seats if seat['occupied'])
             empty_seats = len(seat_monitor.seats) - occupied_seats
             
-            panel_height = 120
+            panel_height = 145
             overlay = frame.copy()
-            cv2.rectangle(overlay, (10, 10), (400, panel_height), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (10, 10), (450, panel_height), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
             cv2.putText(frame, 'XAVFSIZLIK TIZIMI', (20, 35), font, 0.7, (255, 255, 255), 2)
@@ -555,6 +558,20 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
                        (20, 85), font, 0.6, (255, 255, 0), 2)
             cv2.putText(frame, f'Jami: {len(detections)} kishi', 
                        (20, 110), font, 0.6, (255, 100, 100), 2)
+            
+            # ANIQLIK KO'RSATKICHI - RANGLI
+            conf_percent = int(current_confidence * 100)
+            conf_text = f'Aniqlik: {conf_percent}%'
+            
+            # Rang - past aniqlik (sariq), o'rta (yashil), yuqori (ko'k)
+            if conf_percent < 35:
+                conf_color = (0, 255, 255)  # Sariq - ko'p xato
+            elif conf_percent < 55:
+                conf_color = (0, 255, 0)    # Yashil - muvozanatli
+            else:
+                conf_color = (255, 150, 0)  # Ko'k - juda qattiq
+            
+            cv2.putText(frame, conf_text, (20, 135), font, 0.6, conf_color, 2)
             
             cv2.imshow('Maktab Xavfsizlik Tizimi', frame)
             
@@ -577,6 +594,14 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
                 else:
                     print("✗ O'rindiqlar belgilanmadi!")
                     return
+            
+            # ANIQLIKNI REAL VAQTDA O'ZGARTIRISH
+            elif key == ord('+') or key == ord('='):
+                current_confidence = min(0.90, current_confidence + 0.05)
+                print(f"⬆️ Aniqlik oshirildi: {int(current_confidence * 100)}% (kam xato, qattiqroq)")
+            elif key == ord('-') or key == ord('_'):
+                current_confidence = max(0.20, current_confidence - 0.05)
+                print(f"⬇️ Aniqlik kamaytirildi: {int(current_confidence * 100)}% (ko'proq aniqlash)")
     
     except KeyboardInterrupt:
         print("\n✓ Dastur to'xtatildi.")
