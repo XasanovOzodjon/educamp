@@ -646,3 +646,5 @@ if __name__ == "__main__":
     # max_models=5 - 5 ta har xil o'lchamdagi model (kuchli ensemble uchun)
     # confidence=0.45 - faqat ishonchli detectionlar (kam xato)
     auto_ensemble_detection(models_folder='models', confidence_threshold=0.45, max_models=5)
+    
+    #salom
