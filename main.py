@@ -55,7 +55,6 @@ def select_camera_source():
             
             # OBS odatda 1 yoki 2 indexda bo'ladi
             available, names = list_cameras()
-            
             if len(available) > 1:
                 print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {names.get(available[1], 'Noma\'lum')}")
                 use_suggested = input(f"   Kamera {available[1]} ishlatilsinmi? (y/n): ").strip().lower()
