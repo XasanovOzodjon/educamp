@@ -1,0 +1,18 @@
+# Asosiy kutubxonalar (BARCHA PYTHON VERSIYALARDA ISHLAYDI)
+opencv-python>=4.8.0
+numpy>=1.24.0
+ultralytics>=8.0.0
+mediapipe>=0.10.0
+
+# YUZ TANISH - OpenCV DNN (oddiy, lekin ishonchli)
+# Hech qanday qo'shimcha kutubxona kerak emas!
+# Barcha Python versiyalarida ishlaydi (3.8-3.14+)
+
+# ESLATMA:
+# Agar yuqori aniqlik kerak bo'lsa, Python 3.11 yoki 3.12 yuklab:
+# https://www.python.org/downloads/
+# Keyin quyidagilarni o'rnating:
+# pip install insightface onnxruntime
+
+# O'rnatish buyrug'i:
+# pip install -r requirements.txt
