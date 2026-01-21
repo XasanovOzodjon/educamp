@@ -185,6 +185,10 @@ def setup_seats_interactive(camera_index=0):
     seat_monitor = SeatMonitor()
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     
+    # MUHIM: Monitoring bilan bir xil o'lcham
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
     if not cap.isOpened():
         print(f"✗ Kamera {camera_index} ochilmadi!")
         return None
