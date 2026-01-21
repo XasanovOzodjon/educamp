@@ -2,13 +2,26 @@ import cv2
 import numpy as np
 import time
 import os
-import glob
 import json
+import platform
+from collections import deque
 
 # OpenCV xato xabarlarini yashirish
 os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
 os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
 os.environ['OPENCV_LOG_LEVEL'] = 'ERROR'
+
+# Platform aniqlash
+PLATFORM = platform.system()
+
+def get_camera_backend():
+    """Platformaga mos camera backend ni qaytarish"""
+    if PLATFORM == 'Windows':
+        return cv2.CAP_DSHOW
+    elif PLATFORM == 'Darwin':
+        return cv2.CAP_AVFOUNDATION
+    else:
+        return cv2.CAP_V4L2
 
 def install_ultralytics():
     """Ultralytics YOLO kutubxonasini o'rnatish"""
@@ -27,103 +40,179 @@ def install_ultralytics():
             print("✗ O'rnatib bo'lmadi. Qo'lda o'rnating: pip install ultralytics")
             return False
 
-
 def select_camera_source():
     """Kamera manbani tanlash"""
     print("""
     ╔════════════════════════════════════════════════════════════╗
     ║              KAMERA MANBANI TANLANG                        ║
     ╠════════════════════════════════════════════════════════════╣
-    ║                                                            ║
     ║  [1] Oddiy kamera (Laptop yoki USB kamera)                 ║
-    ║  [2] OBS Virtual Camera (OBS orqali)                       ║
+    ║  [2] OBS Virtual Camera                                    ║
     ║  [3] Mavjud kameralarni ko'rish                            ║
-    ║                                                            ║
     ╚════════════════════════════════════════════════════════════╝
     """)
     
     while True:
         choice = input("Tanlang (1-3): ").strip()
-        
         if choice == '1':
-            print("\n✓ Oddiy kamera tanlandi (0-index)")
             return 0
-        
         elif choice == '2':
-            print("\n✓ OBS Virtual Camera tanlandi")
-            print("   OBS'da Settings → Video → Virtual Camera ishga tushganiga ishonch hosil qiling!")
-            
-            # OBS odatda 1 yoki 2 indexda bo'ladi
-            available, names = list_cameras()
-            
-            if len(available) > 1:
-                camera_name = names.get(available[1], "Noma'lum")
-                print(f"\n   OBS uchun tavsiya: Kamera [{available[1]}] - {camera_name}")
-                use_suggested = input(f"   Kamera {available[1]} ishlatilsinmi? (y/n): ").strip().lower()
-                if use_suggested == 'y':
-                    return available[1]
-            
-            # Qo'lda tanlash
             try:
-                camera_index = int(input("   Kamera indexini kiriting (odatda 1 yoki 2): "))
+                camera_index = int(input("Kamera indexini kiriting (odatda 1 yoki 2): "))
                 return camera_index
             except:
                 print("✗ Noto'g'ri format!")
-                continue
-        
         elif choice == '3':
             available, names = list_cameras()
             if available:
                 try:
-                    camera_index = int(input("\nQaysi kamerani ishlatmoqchisiz? Index kiriting: "))
-                    if camera_index in available:
-                        print(f"✓ Kamera {camera_index} tanlandi: {names.get(camera_index, 'Kamera')}")
-                        return camera_index
-                    else:
-                        print("✗ Noto'g'ri index!")
+                    idx = int(input("\nQaysi kamerani ishlatmoqchisiz? Index: "))
+                    if idx in available:
+                        return idx
                 except:
-                    print("✗ Noto'g'ri format!")
-            continue
-        
+                    pass
         else:
-            print("✗ Noto'g'ri tanlov! 1, 2 yoki 3 kiriting.")
-
+            print("✗ Noto'g'ri tanlov!")
 
 def list_cameras():
     """Mavjud kameralarni ko'rsatish"""
     import contextlib
-    
     print("\n" + "="*60)
-    print("MAVJUD KAMERALAR:")
+    print(f"MAVJUD KAMERALAR ({PLATFORM}):")
     print("="*60)
     
-    available_cameras = []
-    camera_names = {}
+    available = []
+    names = {}
+    backend = get_camera_backend()
     
-    # Xato xabarlarini vaqtincha o'chirish
     with open(os.devnull, 'w') as devnull:
         with contextlib.redirect_stderr(devnull):
             for i in range(10):
-                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                cap = cv2.VideoCapture(i, backend)
                 if cap.isOpened():
-                    ret, frame = cap.read()
+                    ret, _ = cap.read()
                     if ret:
-                        available_cameras.append(i)
-                        # Kamera nomini taxmin qilish
-                        if i == 0:
-                            camera_names[i] = "Asosiy kamera (Laptop/USB)"
-                        elif i == 1:
-                            camera_names[i] = "OBS Virtual Camera (ehtimol)"
-                        else:
-                            camera_names[i] = f"Kamera {i}"
-                        print(f"  [{i}] {camera_names[i]}")
+                        available.append(i)
+                        names[i] = f"Kamera {i}"
+                        print(f"  [{i}] {names[i]}")
                     cap.release()
     
-    if not available_cameras:
+    if not available:
         print("  Hech qanday kamera topilmadi!")
-    
     print("="*60 + "\n")
-    return available_cameras, camera_names
+    return available, names
+
+
+class HandRaiseDetector:
+    """Qo'l ko'tarish aniqlagichi - YAXSHILANGAN versiya"""
+    
+    def __init__(self, pose_model):
+        self.pose_model = pose_model
+        self.hand_raise_history = {}  # {person_id: deque([True/False])}
+        self.history_length = 5  # 5 frame tarix (10 dan kamaytirildi)
+        self.min_confidence = 3  # Kamida 3 frame (5 dan kamaytirildi)
+        self.debug_mode = False  # Debug rejimi
+    
+    def is_hand_raised(self, keypoints, box):
+        """Qo'l ko'tarilganligini aniqlash - YUMSHATILGAN algoritm"""
+        try:
+            # YOLO Pose keypoints: 17 ta nuqta
+            # 0: burun, 5: chap elka, 6: o'ng elka, 
+            # 7: chap tirsak, 8: o'ng tirsak, 9: chap bilek, 10: o'ng bilek
+            
+            if len(keypoints) < 11:
+                return False, "Keypoints yetarli emas"
+            
+            # Asosiy nuqtalar
+            nose = keypoints[0][:2]
+            left_shoulder = keypoints[5][:2]
+            right_shoulder = keypoints[6][:2]
+            left_elbow = keypoints[7][:2]
+            right_elbow = keypoints[8][:2]
+            left_wrist = keypoints[9][:2]
+            right_wrist = keypoints[10][:2]
+            
+            # Confidence'larni olish
+            left_wrist_conf = keypoints[9][2]
+            right_wrist_conf = keypoints[10][2]
+            left_elbow_conf = keypoints[7][2]
+            right_elbow_conf = keypoints[8][2]
+            
+            # Elka balandligi
+            shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
+            
+            # Bosh balandligi (elkadan yuqori)
+            shoulder_width = abs(right_shoulder[0] - left_shoulder[0])
+            head_level = shoulder_y - shoulder_width * 0.5  # Yumshatildi
+            
+            # CHAP QO'L tekshirish - YUMSHATILGAN
+            left_raised = False
+            left_reason = ""
+            if left_wrist_conf > 0.2:  # 0.3 dan 0.2 ga tushirildi
+                # 1. Bilek elkadan yuqorida
+                if left_wrist[1] < shoulder_y:
+                    left_raised = True
+                    left_reason = "Bilek elkadan yuqori"
+                    
+                # 2. Yoki bilek boshga yaqin
+                elif left_wrist[1] < head_level + 50:  # 50px yumshatma
+                    left_raised = True
+                    left_reason = "Bilek boshga yaqin"
+                    
+                # 3. Yoki tirsak juda yuqori
+                elif left_elbow_conf > 0.2 and left_elbow[1] < shoulder_y - 30:
+                    left_raised = True
+                    left_reason = "Tirsak yuqori"
+            
+            # O'NG QO'L tekshirish - YUMSHATILGAN
+            right_raised = False
+            right_reason = ""
+            if right_wrist_conf > 0.2:
+                if right_wrist[1] < shoulder_y:
+                    right_raised = True
+                    right_reason = "Bilek elkadan yuqori"
+                elif right_wrist[1] < head_level + 50:
+                    right_raised = True
+                    right_reason = "Bilek boshga yaqin"
+                elif right_elbow_conf > 0.2 and right_elbow[1] < shoulder_y - 30:
+                    right_raised = True
+                    right_reason = "Tirsak yuqori"
+            
+            # Natija
+            is_raised = left_raised or right_raised
+            no_text = "Yo'q"
+            left_status = left_reason if left_raised else no_text
+            right_status = right_reason if right_raised else no_text
+            reason = f"CHAP: {left_status} | O'NG: {right_status}"
+            
+            return is_raised, reason
+            
+        except Exception as e:
+            return False, f"Xato: {str(e)}"
+    
+    def update_person_status(self, person_id, hand_raised):
+        """Shaxsning qo'l ko'tarish holatini yangilash - YUMSHATILGAN"""
+        if person_id not in self.hand_raise_history:
+            self.hand_raise_history[person_id] = deque(maxlen=self.history_length)
+        
+        self.hand_raise_history[person_id].append(hand_raised)
+        
+        # Oxirgi N ta frame'dan kamida M tasida qo'l ko'tarilgan bo'lishi kerak
+        recent_count = sum(self.hand_raise_history[person_id])
+        is_stable = recent_count >= self.min_confidence
+        
+        # Debug
+        if self.debug_mode:
+            history_str = ''.join(['✓' if h else '✗' for h in self.hand_raise_history[person_id]])
+            print(f"  Person {person_id}: {history_str} ({recent_count}/{self.history_length}) -> {'FAOL' if is_stable else 'oddiy'}")
+        
+        return is_stable
+    
+    def clean_old_persons(self, current_ids):
+        """Eski shaxslarni tarixdan o'chirish"""
+        to_remove = [pid for pid in self.hand_raise_history if pid not in current_ids]
+        for pid in to_remove:
+            del self.hand_raise_history[pid]
 
 
 class SeatMonitor:
@@ -132,13 +221,9 @@ class SeatMonitor:
     def __init__(self, config_file='seats_config.json'):
         self.seats = []
         self.config_file = config_file
-        self.setup_mode = False
-        self.temp_points = []
-        self.current_seat_name = ""
         self.load_seats()
     
     def load_seats(self):
-        """Saqlangan o'rindiqlarni yuklash"""
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
@@ -150,7 +235,6 @@ class SeatMonitor:
                 self.seats = []
     
     def save_seats(self):
-        """O'rindiqlarni saqlash"""
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump({'seats': self.seats}, f, ensure_ascii=False, indent=2)
@@ -159,22 +243,14 @@ class SeatMonitor:
             print(f"✗ Saqlashda xato: {e}")
     
     def add_seat(self, name, points):
-        """Yangi o'rindiq qo'shish"""
-        seat = {
-            'name': name,
-            'points': points,
-            'occupied': False,
-            'person_id': None
-        }
+        seat = {'name': name, 'points': points, 'occupied': False, 'person_id': None}
         self.seats.append(seat)
         self.save_seats()
     
     def point_in_polygon(self, point, polygon):
-        """Nuqta polygon ichidami tekshirish"""
         x, y = point
         n = len(polygon)
         inside = False
-        
         p1x, p1y = polygon[0]
         for i in range(1, n + 1):
             p2x, p2y = polygon[i % n]
@@ -186,101 +262,50 @@ class SeatMonitor:
                         if p1x == p2x or x <= xinters:
                             inside = not inside
             p1x, p1y = p2x, p2y
-        
         return inside
     
     def check_occupancy(self, detections):
-        """Har bir o'rindiqni tekshirish - DEBUG bilan"""
-        # Avval hamma o'rindiqni bo'sh deb belgilaymiz
         for seat in self.seats:
             seat['occupied'] = False
             seat['person_id'] = None
         
-        # Har bir aniqlangan odamni tekshirish
         for det_id, det in enumerate(detections):
             x1, y1, x2, y2 = det['box']
-            
-            # MUHIM: Odamning pastki markazini tekshirish (oyoqlari bo'lgan joy)
             bottom_center = [(x1+x2)//2, y2]
             
-            # Qo'shimcha nuqtalar - kengroq tekshirish
-            bottom_left = [x1 + (x2-x1)//4, y2]
-            bottom_right = [x2 - (x2-x1)//4, y2]
-            mid_bottom = [(x1+x2)//2, y2 - (y2-y1)//4]
-            
-            # DEBUG: Tekshirilayotgan nuqtalarni saqlash
-            det['check_points'] = [bottom_center, bottom_left, bottom_right, mid_bottom]
-            
-            # Qaysi o'rindiqda ekanligini topish
-            found_seat = False
             for seat in self.seats:
-                if (self.point_in_polygon(bottom_center, seat['points']) or 
-                    self.point_in_polygon(bottom_left, seat['points']) or
-                    self.point_in_polygon(bottom_right, seat['points']) or
-                    self.point_in_polygon(mid_bottom, seat['points'])):
+                if self.point_in_polygon(bottom_center, seat['points']):
                     seat['occupied'] = True
                     seat['person_id'] = det_id
-                    found_seat = True
-                    print(f"✓ Odam #{det_id+1} -> {seat['name']}")
                     break
-            
-            if not found_seat:
-                print(f"⚠️ Odam #{det_id+1} hech qaysi o'rindiqda emas! Nuqta: {bottom_center}")
     
-    def draw_seats(self, frame, debug=True):
-        """O'rindiqlarni rasmda ko'rsatish"""
-        for i, seat in enumerate(self.seats):
+    def draw_seats(self, frame):
+        for seat in self.seats:
             points = np.array(seat['points'], np.int32)
+            color = (0, 255, 0) if seat['occupied'] else (0, 0, 255)
+            status = "BAND" if seat['occupied'] else "BO'SH"
             
-            # Rang tanlash
-            if seat['occupied']:
-                color = (0, 255, 0)  # Yashil - band
-                status = "BAND"
-            else:
-                color = (0, 0, 255)  # Qizil - bo'sh
-                status = "BO'SH"
-            
-            # Polygon chizish - QALINROQ
             cv2.polylines(frame, [points], True, color, 3)
-            
-            # Shaffof to'ldirish
             overlay = frame.copy()
             cv2.fillPoly(overlay, [points], color)
             cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
             
-            # DEBUG: O'rindiq burchaklarini ko'rsatish
-            if debug:
-                for idx, point in enumerate(seat['points']):
-                    cv2.circle(frame, tuple(point), 6, (255, 255, 0), -1)
-                    cv2.circle(frame, tuple(point), 8, (255, 255, 255), 1)
-                    cv2.putText(frame, str(idx+1), (point[0]+10, point[1]-10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-            
-            # O'rindiq nomi va holati
             cx = int(np.mean([p[0] for p in seat['points']]))
             cy = int(np.mean([p[1] for p in seat['points']]))
-            
             label = f"{seat['name']}: {status}"
             
-            # Matn fonini chizish
             font = cv2.FONT_HERSHEY_SIMPLEX
-            (text_width, text_height), _ = cv2.getTextSize(label, font, 0.7, 2)
-            cv2.rectangle(frame, (cx - text_width//2 - 5, cy - text_height - 5),
-                         (cx + text_width//2 + 5, cy + 5), (0, 0, 0), -1)
-            
-            # Matn
-            cv2.putText(frame, label, (cx - text_width//2, cy), 
-                       font, 0.7, (255, 255, 255), 2)
+            (tw, th), _ = cv2.getTextSize(label, font, 0.7, 2)
+            cv2.rectangle(frame, (cx-tw//2-5, cy-th-5), (cx+tw//2+5, cy+5), (0,0,0), -1)
+            cv2.putText(frame, label, (cx-tw//2, cy), font, 0.7, (255,255,255), 2)
 
 
 def setup_seats_interactive(camera_index=0):
-    """Interaktiv o'rindiqlarni sozlash"""
-    
+    """O'rindiqlarni belgilash"""
     print("""
     ╔════════════════════════════════════════════════════════════╗
     ║           O'RINDIQLARNI BELGILASH REJIMI                   ║
     ╠════════════════════════════════════════════════════════════╣
-    ║                                                            ║
     ║  QANDAY ISHLAYDI:                                          ║
     ║                                                            ║
     ║  1. Videoda o'rindiq burchaklarini sichqoncha bilan        ║
@@ -289,20 +314,18 @@ def setup_seats_interactive(camera_index=0):
     ║  2. 4-nuqtadan keyin o'rindiq nomini kiriting              ║
     ║     (masalan: "1-qator 1-o'rin")                           ║
     ║                                                            ║
-    ║  3. Keyingi o'rindiqni belgilang                           ║
-    ║                                                            ║
-    ║  4. 's' tugmasini bosing - saqlash                         ║
-    ║     'c' tugmasini bosing - oxirgi o'rindiqni o'chirish     ║
-    ║     'r' tugmasini bosing - barchasini tozalash             ║
-    ║     'q' tugmasini bosing - chiqish                         ║
+    ║  TUGMALAR:                                                 ║
+    ║  's' - saqlash (saqlanadi avtomatik)                       ║
+    ║  'c' - oxirgi o'rindiqni o'chirish                         ║
+    ║  'r' - BARCHASINI tozalash                                 ║
+    ║  'q' - chiqish                                             ║
     ║                                                            ║
     ╚════════════════════════════════════════════════════════════╝
     """)
     
     seat_monitor = SeatMonitor()
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    
-    # MUHIM: Monitoring bilan bir xil o'lcham
+    backend = get_camera_backend()
+    cap = cv2.VideoCapture(camera_index, backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
@@ -311,21 +334,17 @@ def setup_seats_interactive(camera_index=0):
         return None
     
     temp_points = []
-    current_name = ""
     
     def mouse_callback(event, x, y, flags, param):
-        nonlocal temp_points, current_name
-        
+        nonlocal temp_points
         if event == cv2.EVENT_LBUTTONDOWN:
             if len(temp_points) < 4:
                 temp_points.append([x, y])
                 print(f"Nuqta {len(temp_points)}: ({x}, {y})")
-                
                 if len(temp_points) == 4:
-                    print("\n4 ta nuqta belgilandi!")
-                    current_name = input("O'rindiq nomini kiriting: ")
-                    seat_monitor.add_seat(current_name, temp_points)
-                    print(f"✓ '{current_name}' qo'shildi!")
+                    name = input("O'rindiq nomini kiriting: ")
+                    seat_monitor.add_seat(name, temp_points)
+                    print(f"✓ '{name}' qo'shildi!")
                     temp_points = []
     
     cv2.namedWindow('O\'rindiqlarni Belgilash')
@@ -339,7 +358,6 @@ def setup_seats_interactive(camera_index=0):
         if not ret:
             break
         
-        # Saqlangan o'rindiqlarni ko'rsatish
         seat_monitor.draw_seats(frame)
         
         # Joriy belgilanayotgan nuqtalarni ko'rsatish
@@ -362,6 +380,11 @@ def setup_seats_interactive(camera_index=0):
         cv2.putText(frame, info, (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
+        # Tugmalar haqida ma'lumot
+        help_text = "'c'-oxirgisini o'chirish | 'r'-barchasini tozalash | 'q'-chiqish"
+        cv2.putText(frame, help_text, (10, frame.shape[0]-20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+        
         cv2.imshow('O\'rindiqlarni Belgilash', frame)
         
         key = cv2.waitKey(1) & 0xFF
@@ -372,11 +395,20 @@ def setup_seats_interactive(camera_index=0):
                 removed = seat_monitor.seats.pop()
                 seat_monitor.save_seats()
                 print(f"✓ '{removed['name']}' o'chirildi")
+            else:
+                print("⚠️ O'chiriladigan o'rindiq yo'q!")
         elif key == ord('r'):
-            seat_monitor.seats = []
-            seat_monitor.save_seats()
-            temp_points = []
-            print("✓ Barcha o'rindiqlar tozalandi")
+            if seat_monitor.seats:
+                confirm = input("\n⚠️ BARCHA o'rindiqlarni o'chirmoqchimisiz? (ha/yo'q): ").strip().lower()
+                if confirm in ['ha', 'yes', 'y']:
+                    seat_monitor.seats = []
+                    seat_monitor.save_seats()
+                    temp_points = []
+                    print("✓ Barcha o'rindiqlar tozalandi!")
+                else:
+                    print("✗ Bekor qilindi")
+            else:
+                print("⚠️ O'rindiqlar allaqachon bo'sh!")
         elif key == ord('s'):
             print(f"\n✓ {len(seat_monitor.seats)} ta o'rindiq saqlandi!")
     
@@ -386,17 +418,16 @@ def setup_seats_interactive(camera_index=0):
     return seat_monitor
 
 
-def monitoring_with_seats(camera_index=0, models_folder='models', confidence_threshold=0.45):
-    """O'rindiqlarni kuzatish bilan monitoring"""
+def monitoring_with_hand_detection(camera_index=0, confidence_threshold=0.45):
+    """QO'L KO'TARISH bilan monitoring - YANGI YECHIM"""
     
-    print("""
+    print(f"""
     ╔════════════════════════════════════════════════════════════╗
-    ║         MAKTAB VIDEO XAVFSIZLIK TIZIMI                     ║
-    ║         O'rindiq Kuzatuvi + AI Detection                   ║
+    ║    MAKTAB XAVFSIZLIK TIZIMI - QO'L KO'TARISH ANIQLASH      ║
+    ║    🙋 Faol o'quvchilar KO'K rangda belgilanadi             ║
     ╚════════════════════════════════════════════════════════════╝
     """)
     
-    # Ultralytics o'rnatish
     if not install_ultralytics():
         return
     
@@ -406,35 +437,37 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
         print("✗ Ultralytics import qilinmadi.")
         return
     
-    # O'rindiqlar kuzatuvchisini yuklash
+    # O'rindiqlar
     seat_monitor = SeatMonitor()
-    
     if not seat_monitor.seats:
         print("\n⚠️ O'rindiqlar belgilanmagan!")
         choice = input("O'rindiqlarni hozir belgilaysizmi? (y/n): ")
         if choice.lower() == 'y':
             seat_monitor = setup_seats_interactive(camera_index)
             if not seat_monitor or not seat_monitor.seats:
-                print("✗ O'rindiqlar belgilanmadi!")
+                print("✗ Dastur to'xtatildi.")
                 return
         else:
-            print("✗ O'rindiqlar kerak! Dastur to'xtatildi.")
+            print("✗ O'rindiqlar kerak!")
             return
     
     # Modellarni yuklash
     print("\nModellar yuklanmoqda...")
-    models = {}
-    
-    # Default model
     try:
-        models['yolov8n'] = YOLO('yolov8n.pt')
-        print("✓ yolov8n.pt yuklandi")
+        person_model = YOLO('yolov8n.pt')  # Odamlarni aniqlash
+        pose_model = YOLO('yolov8n-pose.pt')  # Qo'l pozitsiyasini aniqlash
+        print("✓ Person model: yolov8n.pt")
+        print("✓ Pose model: yolov8n-pose.pt")
     except Exception as e:
         print(f"✗ Model yuklanmadi: {e}")
         return
     
-    # Kamerani ochish
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    # Qo'l ko'tarish aniqlagichi
+    hand_detector = HandRaiseDetector(pose_model)
+    
+    # Kamera
+    backend = get_camera_backend()
+    cap = cv2.VideoCapture(camera_index, backend)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
@@ -443,22 +476,23 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
         return
     
     print("\n" + "="*60)
-    print("✓ MAKTAB XAVFSIZLIK TIZIMI ISHGA TUSHDI!")
+    print("✓ TIZIM ISHGA TUSHDI - QO'L KO'TARISH ANIQLASH FAOL")
     print("="*60)
-    print(f"O'rindiqlar: {len(seat_monitor.seats)} ta")
-    print(f"Kamera: {camera_index}")
-    print("\nTugmalar:")
+    print("Tugmalar:")
     print("  'q' - To'xtatish")
-    print("  's' - Screenshot olish")
-    print("  'e' - O'rindiqlarni qayta sozlash")
-    print("  '+' - Aniqlikni oshirish (kam xato, qattiqroq)")
-    print("  '-' - Aniqlikni kamaytirish (ko'proq aniqlash)")
+    print("  's' - Screenshot")
+    print("  '+/-' - Aniqlikni sozlash")
+    print("  'd' - DEBUG rejimini yoqish/o'chirish")
+    print("  'p' - Pose detection ko'rsatish")
     print("="*60 + "\n")
     
     prev_time = 0
-    model = models['yolov8n']
     font = cv2.FONT_HERSHEY_SIMPLEX
     current_confidence = confidence_threshold
+    frame_skip = 1  # HAR FRAMEDA pose detection (2 dan 1 ga o'zgartirildi)
+    frame_count = 0
+    last_pose_results = []
+    show_pose_points = False  # Pose nuqtalarini ko'rsatish
     
     try:
         while True:
@@ -466,115 +500,183 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             if not ret:
                 break
             
-            # FPS hisoblash
+            frame_count += 1
+            
+            # FPS
             curr_time = time.time()
             fps = 1 / (curr_time - prev_time) if prev_time != 0 else 0
             prev_time = curr_time
             
-            # YOLO detection - REAL VAQT ANIQLIK
-            results = model(frame, conf=current_confidence, classes=[0], 
-                           verbose=False, device='cpu')
-            boxes = results[0].boxes
+            # 1. ODAMLARNI ANIQLASH (har doim)
+            person_results = person_model(frame, conf=current_confidence, 
+                                         classes=[0], verbose=False, device='cpu')
+            boxes = person_results[0].boxes
             
             detections = []
-            for box in boxes:
+            for i, box in enumerate(boxes):
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
-                center = [(x1+x2)//2, (y1+y2)//2]
-                
                 detections.append({
                     'box': [x1, y1, x2, y2],
                     'confidence': conf,
-                    'center': center
+                    'person_id': i,
+                    'hand_raised': False
                 })
             
-            # O'rindiqlarni tekshirish
-            seat_monitor.check_occupancy(detections)
+            # 2. POSE DETECTION (har N-frameda)
+            if frame_count % frame_skip == 0 or frame_count == 1:
+                pose_results = pose_model(frame, conf=0.3, verbose=False, device='cpu')
+                last_pose_results = pose_results
             
-            # O'rindiqlarni chizish
+            # 3. QO'L KO'TARISHNI TEKSHIRISH
+            current_person_ids = set()
+            if last_pose_results and len(last_pose_results) > 0:
+                if hand_detector.debug_mode:
+                    print(f"\n=== Frame {frame_count} - Pose Detection ===")
+                
+                for i, det in enumerate(detections):
+                    x1, y1, x2, y2 = det['box']
+                    person_id = det['person_id']
+                    current_person_ids.add(person_id)
+                    
+                    # Bu odam uchun pose topish
+                    if last_pose_results[0].keypoints is not None:
+                        try:
+                            if i < len(last_pose_results[0].keypoints):
+                                kp = last_pose_results[0].keypoints[i].data[0].cpu().numpy()
+                                
+                                # Qo'l ko'tarilganligini tekshirish
+                                hand_raised_now, reason = hand_detector.is_hand_raised(kp, det['box'])
+                                
+                                if hand_detector.debug_mode:
+                                    status_text = "✓ Ko'tarilgan" if hand_raised_now else "✗ Pastda"
+                                    print(f"Odam #{i+1}: {reason} -> {status_text}")
+                                
+                                # Stabillashtirish - tarixga qo'shish
+                                is_stable = hand_detector.update_person_status(person_id, hand_raised_now)
+                                det['hand_raised'] = is_stable
+                                
+                                # Pose nuqtalarini saqlash (vizualizatsiya uchun)
+                                if show_pose_points:
+                                    det['keypoints'] = kp
+                        except Exception as e:
+                            if hand_detector.debug_mode:
+                                print(f"Odam #{i+1}: Xato - {e}")
+            
+            # Eski shaxslarni tozalash
+            hand_detector.clean_old_persons(current_person_ids)
+            
+            # 4. O'RINDIQLARNI TEKSHIRISH
+            seat_monitor.check_occupancy(detections)
             seat_monitor.draw_seats(frame)
             
-            # Aniqlangan odamlarni chizish
-            for i, det in enumerate(detections):
+            # 5. ODAMLARNI CHIZISH
+            hand_raised_count = 0
+            for det in detections:
                 x1, y1, x2, y2 = det['box']
                 conf = det['confidence']
+                hand_raised = det['hand_raised']
                 
-                # Pastki markazni hisoblash
-                bottom_center = [(x1+x2)//2, y2]
+                if hand_raised:
+                    hand_raised_count += 1
                 
-                # Rangni aniqlash (o'rindiqda bo'lsa yashil, bo'lmasa sariq)
-                in_seat = False
-                seat_name = ""
-                for seat in seat_monitor.seats:
-                    if seat['person_id'] == i:
-                        in_seat = True
-                        seat_name = seat['name']
-                        break
+                # Rangni aniqlash
+                if hand_raised:
+                    color = (255, 150, 0)  # KO'K - qo'l ko'tarilgan
+                    label_prefix = "🙋 FAOL"
+                    thickness = 4
+                else:
+                    # O'rindiqda bo'lsa yashil, yo'qsa sariq
+                    in_seat = any(s['person_id'] == det['person_id'] for s in seat_monitor.seats)
+                    color = (0, 255, 0) if in_seat else (0, 255, 255)
+                    label_prefix = "O'quvchi"
+                    thickness = 2
                 
-                color = (0, 255, 0) if in_seat else (0, 255, 255)
-                
-                # Odam atrofini chizish - QALIN
-                thickness = 3 if in_seat else 2
+                # Odam atrofini chizish
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                 
-                # DEBUG: Barcha tekshirish nuqtalarini ko'rsatish
-                if 'check_points' in det:
-                    for idx, point in enumerate(det['check_points']):
-                        point_color = (0, 255, 0) if in_seat else (0, 0, 255)
-                        cv2.circle(frame, point, 5, point_color, -1)
-                        cv2.circle(frame, point, 7, (255, 255, 255), 1)
-                        # Nuqta raqami
-                        cv2.putText(frame, str(idx+1), (point[0]+10, point[1]), 
-                                   font, 0.4, (255, 255, 255), 1)
+                # POSE NUQTALARINI KO'RSATISH (agar yoqilgan bo'lsa)
+                if show_pose_points and 'keypoints' in det:
+                    kp = det['keypoints']
+                    # Asosiy nuqtalar: 0-burun, 5,6-elkalar, 7,8-tirsaklar, 9,10-bilaklar
+                    important_points = [0, 5, 6, 7, 8, 9, 10]
+                    for idx in important_points:
+                        if idx < len(kp) and kp[idx][2] > 0.2:  # Confidence > 0.2
+                            x, y = int(kp[idx][0]), int(kp[idx][1])
+                            cv2.circle(frame, (x, y), 8, (0, 255, 255), -1)
+                            cv2.circle(frame, (x, y), 10, (255, 255, 255), 2)
+                            cv2.putText(frame, str(idx), (x+12, y), 
+                                       font, 0.5, (255, 255, 255), 2)
+                    
+                    # Elkalarni chiziq bilan bog'lash
+                    if kp[5][2] > 0.2 and kp[6][2] > 0.2:
+                        cv2.line(frame, 
+                                (int(kp[5][0]), int(kp[5][1])),
+                                (int(kp[6][0]), int(kp[6][1])),
+                                (0, 255, 255), 2)
+                    
+                    # Qo'llarni chizish
+                    # Chap qo'l: 5->7->9
+                    if kp[5][2] > 0.2 and kp[7][2] > 0.2:
+                        cv2.line(frame,
+                                (int(kp[5][0]), int(kp[5][1])),
+                                (int(kp[7][0]), int(kp[7][1])),
+                                (0, 255, 0), 2)
+                    if kp[7][2] > 0.2 and kp[9][2] > 0.2:
+                        cv2.line(frame,
+                                (int(kp[7][0]), int(kp[7][1])),
+                                (int(kp[9][0]), int(kp[9][1])),
+                                (0, 255, 0), 2)
+                    
+                    # O'ng qo'l: 6->8->10
+                    if kp[6][2] > 0.2 and kp[8][2] > 0.2:
+                        cv2.line(frame,
+                                (int(kp[6][0]), int(kp[6][1])),
+                                (int(kp[8][0]), int(kp[8][1])),
+                                (255, 0, 0), 2)
+                    if kp[8][2] > 0.2 and kp[10][2] > 0.2:
+                        cv2.line(frame,
+                                (int(kp[8][0]), int(kp[8][1])),
+                                (int(kp[10][0]), int(kp[10][1])),
+                                (255, 0, 0), 2)
                 
-                # Asosiy pastki nuqta - KATTAROQ
+                # Pastki nuqta
+                bottom_center = [(x1+x2)//2, y2]
                 cv2.circle(frame, bottom_center, 10, color, -1)
                 cv2.circle(frame, bottom_center, 12, (255, 255, 255), 2)
                 
                 # Label
-                if in_seat:
-                    label = f"#{i+1} - {seat_name} ({int(conf*100)}%)"
-                    bg_color = (0, 200, 0)
-                else:
-                    label = f"#{i+1} - JOYDA EMAS ({int(conf*100)}%)"
-                    bg_color = (0, 100, 200)
+                seat_name = ""
+                for seat in seat_monitor.seats:
+                    if seat['person_id'] == det['person_id']:
+                        seat_name = f" - {seat['name']}"
+                        break
+                
+                label = f"{label_prefix} #{det['person_id']+1}{seat_name} ({int(conf*100)}%)"
                 
                 # Label foni
-                (text_width, text_height), _ = cv2.getTextSize(label, font, 0.6, 2)
-                cv2.rectangle(frame, (x1, y1-35), (x1 + text_width + 10, y1-5), bg_color, -1)
-                cv2.putText(frame, label, (x1+5, y1-15), font, 0.6, (255, 255, 255), 2)
+                bg_color = (200, 100, 0) if hand_raised else (0, 150, 0)
+                (tw, th), _ = cv2.getTextSize(label, font, 0.6, 2)
+                cv2.rectangle(frame, (x1, y1-35), (x1+tw+10, y1-5), bg_color, -1)
+                cv2.putText(frame, label, (x1+5, y1-15), font, 0.6, (255,255,255), 2)
             
-            # Statistika paneli
-            occupied_seats = sum(1 for seat in seat_monitor.seats if seat['occupied'])
-            empty_seats = len(seat_monitor.seats) - occupied_seats
+            # 6. STATISTIKA PANELI
+            occupied = sum(1 for s in seat_monitor.seats if s['occupied'])
+            empty = len(seat_monitor.seats) - occupied
             
-            panel_height = 145
+            panel_h = 170
             overlay = frame.copy()
-            cv2.rectangle(overlay, (10, 10), (450, panel_height), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (10, 10), (500, panel_h), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
-            cv2.putText(frame, 'XAVFSIZLIK TIZIMI', (20, 35), font, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f'FPS: {int(fps)}', (20, 60), font, 0.6, (0, 255, 0), 2)
-            cv2.putText(frame, f'Band: {occupied_seats} | Bo\'sh: {empty_seats}', 
-                       (20, 85), font, 0.6, (255, 255, 0), 2)
-            cv2.putText(frame, f'Jami: {len(detections)} kishi', 
-                       (20, 110), font, 0.6, (255, 100, 100), 2)
+            cv2.putText(frame, 'XAVFSIZLIK + FAOLLIK TIZIMI', (20, 35), font, 0.7, (255,255,255), 2)
+            cv2.putText(frame, f'FPS: {int(fps)}', (20, 60), font, 0.6, (0,255,0), 2)
+            cv2.putText(frame, f'Band: {occupied} | Bo\'sh: {empty}', (20, 85), font, 0.6, (255,255,0), 2)
+            cv2.putText(frame, f'Jami: {len(detections)} kishi', (20, 110), font, 0.6, (255,100,100), 2)
+            cv2.putText(frame, f'🙋 Faol: {hand_raised_count} ta', (20, 135), font, 0.6, (255,150,0), 2)
+            cv2.putText(frame, f'Aniqlik: {int(current_confidence*100)}%', (20, 160), font, 0.6, (0,255,255), 2)
             
-            # ANIQLIK KO'RSATKICHI - RANGLI
-            conf_percent = int(current_confidence * 100)
-            conf_text = f'Aniqlik: {conf_percent}%'
-            
-            # Rang - past aniqlik (sariq), o'rta (yashil), yuqori (ko'k)
-            if conf_percent < 35:
-                conf_color = (0, 255, 255)  # Sariq - ko'p xato
-            elif conf_percent < 55:
-                conf_color = (0, 255, 0)    # Yashil - muvozanatli
-            else:
-                conf_color = (255, 150, 0)  # Ko'k - juda qattiq
-            
-            cv2.putText(frame, conf_text, (20, 135), font, 0.6, conf_color, 2)
-            
-            cv2.imshow('Maktab Xavfsizlik Tizimi', frame)
+            cv2.imshow('Maktab Tizimi - Qo\'l Ko\'tarish', frame)
             
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -582,27 +684,13 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             elif key == ord('s'):
                 filename = f'screenshot_{time.strftime("%Y%m%d_%H%M%S")}.jpg'
                 cv2.imwrite(filename, frame)
-                print(f"✓ Screenshot saqlandi: {filename}")
-            elif key == ord('e'):
-                cap.release()
-                cv2.destroyAllWindows()
-                seat_monitor = setup_seats_interactive(camera_index)
-                if seat_monitor and seat_monitor.seats:
-                    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                    print("✓ O'rindiqlar yangilandi, monitoring davom etmoqda...")
-                else:
-                    print("✗ O'rindiqlar belgilanmadi!")
-                    return
-            
-            # ANIQLIKNI REAL VAQTDA O'ZGARTIRISH
-            elif key == ord('+') or key == ord('='):
+                print(f"✓ Screenshot: {filename}")
+            elif key in [ord('+'), ord('=')]:
                 current_confidence = min(0.90, current_confidence + 0.05)
-                print(f"⬆️ Aniqlik oshirildi: {int(current_confidence * 100)}% (kam xato, qattiqroq)")
-            elif key == ord('-') or key == ord('_'):
+                print(f"⬆️ Aniqlik: {int(current_confidence*100)}%")
+            elif key in [ord('-'), ord('_')]:
                 current_confidence = max(0.20, current_confidence - 0.05)
-                print(f"⬇️ Aniqlik kamaytirildi: {int(current_confidence * 100)}% (ko'proq aniqlash)")
+                print(f"⬇️ Aniqlik: {int(current_confidence*100)}%")
     
     except KeyboardInterrupt:
         print("\n✓ Dastur to'xtatildi.")
@@ -612,28 +700,46 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
 
 
 if __name__ == "__main__":
-    print("""
+    camera_index = None
+    
+    while True:
+        print(f"""
     ╔════════════════════════════════════════════════════════════╗
-    ║       MAKTAB VIDEO XAVFSIZLIK TIZIMI - MENYU               ║
+    ║    MAKTAB XAVFSIZLIK TIZIMI - QO'L KO'TARISH VERSIYA       ║
+    ║    Platform: {PLATFORM:<46} ║
     ╠════════════════════════════════════════════════════════════╣
-    ║                                                            ║
-    ║  [1] O'rindiqlarni sozlash/belgilash                       ║
-    ║  [2] Monitoring boshlash (o'rindiqlar bilan)               ║
-    ║                                                            ║
+    ║  [1] O'rindiqlarni sozlash                                 ║
+    ║  [2] Monitoring + Qo'l Ko'tarish Aniqlash                  ║
+    ║  [3] Kamerani qayta tanlash                                ║
+    ║  [q] Chiqish                                               ║
     ╚════════════════════════════════════════════════════════════╝
     """)
-    
-    choice = input("\nTanlang (1-2): ").strip()
-    
-    if choice == '1':
-        # Kamera tanlash
-        camera_index = select_camera_source()
-        setup_seats_interactive(camera_index=camera_index)
         
-    elif choice == '2':
-        # Kamera tanlash
-        camera_index = select_camera_source()
-        monitoring_with_seats(camera_index=camera_index, confidence_threshold=0.45)
+        choice = input("\nTanlang (1-3 yoki q): ").strip().lower()
         
-    else:
-        print("✗ Noto'g'ri tanlov!")
+        if choice == 'q':
+            print("✓ Dastur to'xtatildi. Xayr!")
+            break
+            
+        elif choice == '1':
+            if camera_index is None:
+                camera_index = select_camera_source()
+            setup_seats_interactive(camera_index=camera_index)
+            print("\n✓ O'rindiqlar saqlandi! Endi [2] ni tanlang - Monitoring boshlash")
+            input("\n[Enter] tugmasini bosing menuga qaytish uchun...")
+            
+        elif choice == '2':
+            if camera_index is None:
+                camera_index = select_camera_source()
+            monitoring_with_hand_detection(camera_index=camera_index, confidence_threshold=0.45)
+            print("\n✓ Monitoring to'xtatildi.")
+            input("\n[Enter] tugmasini bosing menuga qaytish uchun...")
+            
+        elif choice == '3':
+            camera_index = select_camera_source()
+            print(f"✓ Kamera {camera_index} tanlandi")
+            input("\n[Enter] tugmasini bosing menuga qaytish uchun...")
+            
+        else:
+            print("✗ Noto'g'ri tanlov! 1, 2, 3 yoki q kiriting.")
+            time.sleep(1)
