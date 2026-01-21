@@ -99,11 +99,21 @@ class SeatMonitor:
         
         # Har bir aniqlangan odamni tekshirish
         for det_id, det in enumerate(detections):
-            center = det['center']
+            x1, y1, x2, y2 = det['box']
+            
+            # MUHIM: Odamning pastki markazini tekshirish (oyoqlari bo'lgan joy)
+            bottom_center = [(x1+x2)//2, y2]  # Pastki o'rta nuqta
+            
+            # Qo'shimcha nuqtalar - kengroq tekshirish
+            bottom_left = [x1 + (x2-x1)//4, y2]
+            bottom_right = [x2 - (x2-x1)//4, y2]
             
             # Qaysi o'rindiqda ekanligini topish
             for seat in self.seats:
-                if self.point_in_polygon(center, seat['points']):
+                # Agar pastki nuqtalardan biri o'rindiq ichida bo'lsa
+                if (self.point_in_polygon(bottom_center, seat['points']) or 
+                    self.point_in_polygon(bottom_left, seat['points']) or
+                    self.point_in_polygon(bottom_right, seat['points'])):
                     seat['occupied'] = True
                     seat['person_id'] = det_id
                     break
@@ -363,25 +373,38 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
             for i, det in enumerate(detections):
                 x1, y1, x2, y2 = det['box']
                 conf = det['confidence']
-                center = det['center']
+                
+                # Pastki markazni hisoblash
+                bottom_center = [(x1+x2)//2, y2]
                 
                 # Rangni aniqlash (o'rindiqda bo'lsa yashil, bo'lmasa sariq)
                 in_seat = False
+                seat_name = ""
                 for seat in seat_monitor.seats:
                     if seat['person_id'] == i:
                         in_seat = True
+                        seat_name = seat['name']
                         break
                 
                 color = (0, 255, 0) if in_seat else (0, 255, 255)
                 
                 # Odam atrofini chizish
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.circle(frame, center, 5, color, -1)
+                
+                # Pastki markazga nuqta (tekshirish uchun)
+                cv2.circle(frame, bottom_center, 8, color, -1)
+                cv2.circle(frame, bottom_center, 10, (255, 255, 255), 2)
                 
                 # Label
-                label = f"#{i+1} {int(conf*100)}%"
-                cv2.putText(frame, label, (x1, y1-10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                if in_seat:
+                    label = f"#{i+1} - {seat_name}"
+                else:
+                    label = f"#{i+1} - JOYDA EMAS"
+                
+                # Label foni
+                (text_width, text_height), _ = cv2.getTextSize(label, font, 0.6, 2)
+                cv2.rectangle(frame, (x1, y1-30), (x1 + text_width + 10, y1), (0, 0, 0), -1)
+                cv2.putText(frame, label, (x1+5, y1-10), font, 0.6, color, 2)
             
             # Statistika paneli
             occupied_seats = sum(1 for seat in seat_monitor.seats if seat['occupied'])
