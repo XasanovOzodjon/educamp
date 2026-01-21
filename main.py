@@ -334,6 +334,7 @@ def monitoring_with_seats(camera_index=0, models_folder='models', confidence_thr
     
     prev_time = 0
     model = models['yolov8n']
+    font = cv2.FONT_HERSHEY_SIMPLEX
     
     try:
         while True:
