@@ -187,3 +187,12 @@ pip-selfcheck.json
 
 
 # End of https://www.toptal.com/developers/gitignore/api/python,venv
+yolov8n-pose.pt
+.gitignore
+dataset/ds_model_vggface_detector_opencv_aligned_normalization_base_expand_0.pkl
+yolov8n.pt
+dataset/Ozod/1.jpg
+.gitignore
+.gitignore
+
+dataset
