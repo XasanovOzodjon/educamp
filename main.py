@@ -24,6 +24,20 @@ from camera_utils import (
     PLATFORM
 )
 
+# ===== SHARED STATE - Django bilan ma'lumot almashish =====
+from core.shared_state import save_state
+# ==========================================================
+
+# ============== GLOBAL O'ZGARUVCHILAR ==============
+BARCHA = 0
+FAOL = 0
+# ==================================================
+
+def get_stats():
+    """API uchun statistikani qaytarish"""
+    global BARCHA, FAOL
+    return {"barcha": BARCHA, "faol": FAOL}
+
 
 def setup_seats_interactive(camera_index=0):
     """O'rindiqlarni interaktiv belgilash"""
@@ -153,6 +167,10 @@ def register_students_faces(camera_index=0):
 def full_monitoring_system(camera_index=0, confidence_threshold=0.45):
     """TO'LIQ MONITORING TIZIMI"""
     
+    # ===== GLOBAL O'ZGARUVCHILARNI E'LON QILISH =====
+    global BARCHA, FAOL
+    # ================================================
+    
     print(f"""
     ╔════════════════════════════════════════════════════════════╗
     ║    MAKTAB MONITORING TIZIMI - SODDALASHTIRILGAN v3.0       ║
@@ -270,6 +288,10 @@ def full_monitoring_system(camera_index=0, confidence_threshold=0.45):
                     # 'face_confidence': 0.0  # O'CHIRILDI
                 })
             
+            # ===== BARCHA NI YANGILASH =====
+            BARCHA = len(detections)
+            # ================================
+            
             # 2. POSE DETECTION
             if frame_count % frame_skip == 0 or frame_count == 1:
                 pose_results = pose_model(frame, conf=0.3, verbose=False, device='cpu')
@@ -307,6 +329,18 @@ def full_monitoring_system(camera_index=0, confidence_threshold=0.45):
                                     
                         except Exception:
                             pass
+            
+            # ===== FAOL NI YANGILASH =====
+            FAOL = stats['hand_raised']
+            # ==============================
+            
+            # ===== DJANGO UCHUN STATE SAQLASH =====
+            save_state(
+                barcha=BARCHA,
+                faol=FAOL,
+                uxlayotgan=stats['sleeping']
+            )
+            # ======================================
             
             # Eski shaxslarni tozalash
             hand_detector.clean_old_persons(current_person_ids)
@@ -359,7 +393,6 @@ def full_monitoring_system(camera_index=0, confidence_threshold=0.45):
                 cv2.rectangle(frame, (x1, y1-label_height), (x1+tw+15, y1-5), (255,255,255), 2)
                 cv2.putText(frame, label, (x1+7, y1-17), font, 0.55, (255,255,255), 2)
             
-            # 6. STATISTIKA PANELI
             seat_stats = seat_monitor.get_statistics()
             
             panel_h = 260

@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ma'lumotlar Paneli</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: linear-gradient(145deg, #15151f 0%, #1a1a28 100%);
+            --accent-cyan: #00f5d4;
+            --accent-magenta: #f72585;
+            --accent-gold: #ffd60a;
+            --text-primary: #ffffff;
+            --text-secondary: #8888a0;
+            --glow-cyan: 0 0 40px rgba(0, 245, 212, 0.3);
+            --glow-magenta: 0 0 40px rgba(247, 37, 133, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            color: var(--text-primary);
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .bg-animation::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(0, 245, 212, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(247, 37, 133, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, rgba(255, 214, 10, 0.03) 0%, transparent 50%);
+            animation: bgPulse 15s ease-in-out infinite;
+        }
+
+        @keyframes bgPulse {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(-2%, 2%) scale(1.02); }
+            66% { transform: translate(2%, -2%) scale(0.98); }
+        }
+
+        /* Grid pattern overlay */
+        .grid-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .container {
+            position: relative;
+            z-index: 2;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 80px;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .header h1 {
+            font-family: 'Unbounded', sans-serif;
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-magenta) 50%, var(--accent-gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -2px;
+            margin-bottom: 16px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 300;
+            letter-spacing: 0.5px;
+        }
+
+        /* Stats Container */
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
+            margin-bottom: 60px;
+        }
+
+        /* Stat Card */
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 24px;
+            padding: 40px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            animation: fadeInUp 0.8s ease-out backwards;
+        }
+
+        .stat-card:nth-child(1) { animation-delay: 0.1s; }
+        .stat-card:nth-child(2) { animation-delay: 0.2s; }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-magenta));
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.4s ease;
+        }
+
+        .stat-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-card.cyan:hover {
+            box-shadow: var(--glow-cyan);
+        }
+
+        .stat-card.magenta:hover {
+            box-shadow: var(--glow-magenta);
+        }
+
+        /* Card Icon */
+        .card-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 28px;
+            position: relative;
+        }
+
+        .card-icon.cyan {
+            background: linear-gradient(135deg, rgba(0, 245, 212, 0.15), rgba(0, 245, 212, 0.05));
+        }
+
+        .card-icon.magenta {
+            background: linear-gradient(135deg, rgba(247, 37, 133, 0.15), rgba(247, 37, 133, 0.05));
+        }
+
+        .card-icon svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .card-icon.cyan svg {
+            stroke: var(--accent-cyan);
+        }
+
+        .card-icon.magenta svg {
+            stroke: var(--accent-magenta);
+        }
+
+        /* Card Content */
+        .card-label {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+            font-weight: 500;
+        }
+
+        .card-value {
+            font-family: 'Unbounded', sans-serif;
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 8px;
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+        }
+
+        .stat-card.cyan .card-value {
+            color: var(--accent-cyan);
+        }
+
+        .stat-card.magenta .card-value {
+            color: var(--accent-magenta);
+        }
+
+        .card-subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Decorative elements */
+        .card-decoration {
+            position: absolute;
+            bottom: -30px;
+            right: -30px;
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            opacity: 0.05;
+        }
+
+        .stat-card.cyan .card-decoration {
+            background: var(--accent-cyan);
+        }
+
+        .stat-card.magenta .card-decoration {
+            background: var(--accent-magenta);
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error State */
+        .error-state {
+            text-align: center;
+            padding: 60px 40px;
+            background: var(--bg-card);
+            border-radius: 24px;
+            border: 1px solid rgba(247, 37, 133, 0.2);
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .error-state h3 {
+            font-family: 'Unbounded', sans-serif;
+            color: var(--accent-magenta);
+            font-size: 1.5rem;
+            margin-bottom: 12px;
+        }
+
+        .error-state p {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        .retry-btn {
+            background: linear-gradient(135deg, var(--accent-magenta), #9d174d);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .retry-btn:hover {
+            transform: scale(1.05);
+            box-shadow: var(--glow-magenta);
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 60px;
+            padding-top: 40px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .footer p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .update-time {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 10px 20px;
+            border-radius: 100px;
+            margin-top: 16px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-cyan);
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 40px 16px;
+            }
+
+            .header {
+                margin-bottom: 50px;
+            }
+
+            .stat-card {
+                padding: 32px;
+            }
+
+            .card-value {
+                font-size: 2.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+    <div class="grid-overlay"></div>
+
+    <div class="container">
+        <header class="header">
+            <h1>Ma'lumotlar Paneli</h1>
+            <p>Real vaqtda statistika va tahlil</p>
+        </header>
+
+        <div id="content">
+            <div class="stats-container">
+                <div class="stat-card cyan">
+                    <div class="card-icon cyan">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                        </svg>
+                    </div>
+                    <div class="card-label">Barcha foydalanuvchilar</div>
+                    <div class="card-value" id="barcha">
+                        <div class="loading">
+                            <div class="loading-spinner"></div>
+                        </div>
+                    </div>
+                    <div class="card-subtitle">Jami ro'yxatdan o'tganlar</div>
+                    <div class="card-decoration"></div>
+                </div>
+
+                <div class="stat-card magenta">
+                    <div class="card-icon magenta">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                        </svg>
+                    </div>
+                    <div class="card-label">Faol foydalanuvchilar</div>
+                    <div class="card-value" id="faol">
+                        <div class="loading">
+                            <div class="loading-spinner"></div>
+                        </div>
+                    </div>
+                    <div class="card-subtitle">Hozirda onlayn</div>
+                    <div class="card-decoration"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>Avtomatik yangilanadi har 1 soniyada</p>
+            <div class="update-time">
+                <span class="pulse-dot"></span>
+                <span id="lastUpdate">Yuklanmoqda...</span>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Avtomatik - qaysi domendan ochilsa, o'sha domenga so'rov yuboradi
+        const API_URL = window.location.origin + '/getdata/';
+        
+        // Joriy qiymatlarni saqlash uchun
+        let currentValues = {
+            barcha: 0,
+            faol: 0
+        };
+
+        // Format number with animation - TUZATILGAN
+        function animateNumber(element, target, key) {
+            // Agar target undefined, null yoki NaN bo'lsa
+            if (target === undefined || target === null || isNaN(target)) {
+                console.warn('Noto\'g\'ri qiymat:', key, target);
+                element.textContent = '0';
+                return;
+            }
+
+            const start = currentValues[key] || 0;
+            const duration = 1000;
+            const startTime = performance.now();
+
+            const animate = (currentTime) => {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+
+                // Easing function - smooth animation
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                const current = Math.round(start + (target - start) * easeOut);
+
+                element.textContent = formatNumber(current);
+
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    // Animatsiya tugaganda haqiqiy qiymatni saqlash
+                    currentValues[key] = target;
+                    element.textContent = formatNumber(target);
+                }
+            };
+
+            requestAnimationFrame(animate);
+        }
+
+        // Format large numbers
+        function formatNumber(num) {
+            if (num === undefined || num === null || isNaN(num)) return '0';
+            return new Intl.NumberFormat('uz-UZ').format(num);
+        }
+
+        // Update time display
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('uz-UZ', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('lastUpdate').textContent = `Oxirgi yangilanish: ${timeStr}`;
+        }
+
+        // Show error state
+        function showError(message) {
+            document.getElementById('content').innerHTML = `
+                <div class="error-state">
+                    <h3>Xatolik yuz berdi</h3>
+                    <p>${message}</p>
+                    <button class="retry-btn" onclick="fetchData()">Qayta urinish</button>
+                </div>
+            `;
+        }
+
+        // Restore cards after error
+        function restoreCards() {
+            document.getElementById('content').innerHTML = `
+                <div class="stats-container">
+                    <div class="stat-card cyan">
+                        <div class="card-icon cyan">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                            </svg>
+                        </div>
+                        <div class="card-label">Barcha foydalanuvchilar</div>
+                        <div class="card-value" id="barcha">
+                            <div class="loading">
+                                <div class="loading-spinner"></div>
+                            </div>
+                        </div>
+                        <div class="card-subtitle">Jami ro'yxatdan o'tganlar</div>
+                        <div class="card-decoration"></div>
+                    </div>
+
+                    <div class="stat-card magenta">
+                        <div class="card-icon magenta">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                            </svg>
+                        </div>
+                        <div class="card-label">Faol foydalanuvchilar</div>
+                        <div class="card-value" id="faol">
+                            <div class="loading">
+                                <div class="loading-spinner"></div>
+                            </div>
+                        </div>
+                        <div class="card-subtitle">Hozirda onlayn</div>
+                        <div class="card-decoration"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Fetch data from API
+        async function fetchData() {
+            try {
+                const response = await fetch(API_URL);
+
+                if (!response.ok) {
+                    throw new Error('Server javob bermadi (Status: ' + response.status + ')');
+                }
+
+                const data = await response.json();
+
+                // Debug uchun - console da ko'rish mumkin
+                console.log('API dan kelgan data:', data);
+
+                // Check if elements exist, if not restore them
+                if (!document.getElementById('barcha')) {
+                    restoreCards();
+                }
+
+                const barchaEl = document.getElementById('barcha');
+                const faolEl = document.getElementById('faol');
+
+                // Ma'lumotlarni tekshirish va ko'rsatish
+                // API turli formatda qaytarishi mumkin, shuning uchun tekshiramiz
+                let barchaValue, faolValue;
+
+                // Agar data to'g'ridan-to'g'ri raqamlar bo'lsa
+                if (typeof data.barcha === 'number') {
+                    barchaValue = data.barcha;
+                } else if (typeof data.barcha === 'string') {
+                    barchaValue = parseInt(data.barcha, 10);
+                } else {
+                    barchaValue = 0;
+                }
+
+                if (typeof data.faol === 'number') {
+                    faolValue = data.faol;
+                } else if (typeof data.faol === 'string') {
+                    faolValue = parseInt(data.faol, 10);
+                } else {
+                    faolValue = 0;
+                }
+
+                console.log('Parsed values - barcha:', barchaValue, 'faol:', faolValue);
+
+                // Animatsiya bilan ko'rsatish
+                animateNumber(barchaEl, barchaValue, 'barcha');
+                animateNumber(faolEl, faolValue, 'faol');
+
+                updateTime();
+
+            } catch (error) {
+                console.error('Xatolik:', error);
+                showError('Serverga ulanib bo\'lmadi. Server ishga tushirilganiga ishonch hosil qiling.<br><small>' + error.message + '</small>');
+            }
+        }
+
+        // Initial fetch
+        fetchData();
+
+        // Auto-refresh every 1 second
+        setInterval(fetchData, 1000);
+    </script>
+</body>
+</html>
