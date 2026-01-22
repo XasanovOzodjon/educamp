@@ -13,7 +13,6 @@ import time
 
 # DeepFace import
 from deepface import DeepFace
-from deepface.commons import functions
 
 
 class FastFaceRecognizer:
