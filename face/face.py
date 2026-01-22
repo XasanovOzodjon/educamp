@@ -1,51 +1,36 @@
 """
-OPTIMALLASHTIRILGAN Yuzni aniqlash tizimi
-Tez ishlash uchun: embedding cache, threading, kichik rasm
+SODDA VA ANIQ YUZ ANIQLASH TIZIMI
 """
 
 import cv2
 import os
 import pickle
 import numpy as np
-from threading import Thread
-from queue import Queue
-import time
-
-# DeepFace import
 from deepface import DeepFace
 
 
-class FastFaceRecognizer:
+class FaceRecognizer:
     def __init__(self, dataset_path="./dataset"):
         self.dataset_path = dataset_path
         self.embeddings_file = os.path.join(dataset_path, "embeddings.pkl")
-        self.embeddings = {}  # {name: [embedding1, embedding2, ...]}
+        self.embeddings = {}
         
-        # Parametrlar - TEZLIK UCHUN OPTIMALLASHTIRILGAN
-        self.model_name = "Facenet"  # Facenet tez va aniq
-        self.detector_backend = "opencv"  # Eng tez detector
-        self.threshold = 0.7  # Facenet uchun chegara
-        self.resize_scale = 0.5  # Rasmni kichiklashtirish (2x tez)
+        # ENG ANIQ SOZLAMALAR
+        self.model_name = "ArcFace"  # Eng aniq model
+        self.threshold = 0.68  # ArcFace uchun optimal
         
-        # Dataset papkasi
         if not os.path.exists(dataset_path):
             os.makedirs(dataset_path)
         
-        # Oldindan hisoblangan embeddinglarni yuklash
         self.load_embeddings()
-        
-        print(f"Model: {self.model_name}")
-        print(f"Yuklangan odamlar: {len(self.embeddings)}")
+        print(f"✓ Model: {self.model_name}")
+        print(f"✓ Odamlar: {list(self.embeddings.keys()) if self.embeddings else 'yo`q'}")
     
     def load_embeddings(self):
-        """Saqlangan embeddinglarni yuklash"""
+        """Embeddinglarni yuklash"""
         if os.path.exists(self.embeddings_file):
-            try:
-                with open(self.embeddings_file, 'rb') as f:
-                    self.embeddings = pickle.load(f)
-                print(f"Embeddinglar yuklandi: {list(self.embeddings.keys())}")
-            except:
-                self.embeddings = {}
+            with open(self.embeddings_file, 'rb') as f:
+                self.embeddings = pickle.load(f)
     
     def save_embeddings(self):
         """Embeddinglarni saqlash"""
@@ -58,39 +43,32 @@ class FastFaceRecognizer:
             result = DeepFace.represent(
                 img_path=img,
                 model_name=self.model_name,
-                detector_backend=self.detector_backend,
-                enforce_detection=False
+                enforce_detection=True,
+                detector_backend="retinaface"  # Eng aniq detector
             )
-            if result and len(result) > 0:
-                return np.array(result[0]['embedding']), result[0].get('facial_area')
+            if result:
+                return np.array(result[0]['embedding'])
         except:
-            pass
-        return None, None
-    
-    def cosine_distance(self, emb1, emb2):
-        """Ikki embedding orasidagi masofa"""
-        dot = np.dot(emb1, emb2)
-        norm1 = np.linalg.norm(emb1)
-        norm2 = np.linalg.norm(emb2)
-        return 1 - (dot / (norm1 * norm2))
+            return None
+        return None
     
     def find_person(self, embedding):
-        """Embeddingni dataset bilan solishtirish - JUDA TEZ"""
-        best_match = None
-        best_distance = float('inf')
+        """Eng yaqin odamni topish"""
+        best_name = None
+        best_score = 0
         
         for name, emb_list in self.embeddings.items():
             for stored_emb in emb_list:
-                dist = self.cosine_distance(embedding, stored_emb)
-                if dist < best_distance:
-                    best_distance = dist
-                    best_match = name
+                # Cosine similarity
+                score = np.dot(embedding, stored_emb) / (np.linalg.norm(embedding) * np.linalg.norm(stored_emb))
+                
+                if score > best_score:
+                    best_score = score
+                    best_name = name
         
-        if best_distance < self.threshold:
-            confidence = (1 - best_distance) * 100
-            return best_match, confidence, best_distance
-        
-        return None, 0, best_distance
+        if best_score > self.threshold:
+            return best_name, best_score * 100
+        return None, 0
     
     def add_person(self, name):
         """Yangi odam qo'shish"""
@@ -99,19 +77,12 @@ class FastFaceRecognizer:
             os.makedirs(person_path)
         
         cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        
-        collected_embeddings = []
+        embeddings_list = []
         count = 0
         total = 5
         
-        print(f"\n'{name}' uchun {total} ta rasm olinadi.")
+        print(f"\n{name} uchun {total} ta rasm kerak")
         print("SPACE - rasm olish | Q - chiqish\n")
-        
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
         
         while count < total:
             ret, frame = cap.read()
@@ -119,31 +90,24 @@ class FastFaceRecognizer:
                 break
             
             display = frame.copy()
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(80, 80))
-            
-            for (x, y, w, h) in faces:
-                cv2.rectangle(display, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            
-            cv2.putText(display, f"Rasmlar: {count}/{total}", (10, 30),
+            cv2.putText(display, f"Rasmlar: {count}/{total}", (20, 40),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(display, "SPACE - olish | Q - chiqish", (10, 70),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(display, "SPACE - olish", (20, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
-            cv2.imshow(f"Qo'shish: {name}", display)
-            
+            cv2.imshow("Yangi odam", display)
             key = cv2.waitKey(1) & 0xFF
             
             if key == ord(' '):
-                embedding, _ = self.get_embedding(frame)
-                if embedding is not None:
-                    collected_embeddings.append(embedding)
-                    img_path = os.path.join(person_path, f"{count+1}.jpg")
-                    cv2.imwrite(img_path, frame)
+                print("Rasm olinmoqda...")
+                emb = self.get_embedding(frame)
+                if emb is not None:
+                    embeddings_list.append(emb)
+                    cv2.imwrite(os.path.join(person_path, f"{count+1}.jpg"), frame)
                     count += 1
-                    print(f"✓ Rasm {count} saqlandi")
+                    print(f"✓ {count}/{total}")
                 else:
-                    print("✗ Yuz topilmadi, qayta urinib ko'ring")
+                    print("✗ Yuz topilmadi!")
             
             elif key == ord('q'):
                 break
@@ -151,153 +115,74 @@ class FastFaceRecognizer:
         cap.release()
         cv2.destroyAllWindows()
         
-        if collected_embeddings:
-            self.embeddings[name] = collected_embeddings
+        if embeddings_list:
+            self.embeddings[name] = embeddings_list
             self.save_embeddings()
-            print(f"\n'{name}' muvaffaqiyatli qo'shildi!")
-        
-        return count
+            print(f"\n✓ {name} qo'shildi!")
     
-    def recognize_realtime(self):
-        """OPTIMALLASHTIRILGAN real vaqtda aniqlash"""
-        
+    def recognize(self):
+        """Real vaqtda aniqlash"""
         if not self.embeddings:
-            print("\n⚠ Dataset bo'sh! Avval odam qo'shing (menyu: 1)")
+            print("\n✗ Avval odam qo'shing!")
             return
         
         print(f"\nDataset: {list(self.embeddings.keys())}")
         print("Q - chiqish\n")
         
         cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
         
-        # OpenCV yuz detektori (juda tez)
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
-        
-        # Threading uchun
-        result_queue = Queue(maxsize=1)
-        frame_queue = Queue(maxsize=1)
-        
-        # Natija saqlash
-        current_result = {'name': None, 'confidence': 0, 'box': None}
-        frame_count = 0
-        process_every = 5  # Har 5 kadrda bir embedding hisoblash
-        
-        def process_frame():
-            """Alohida threadda yuzni aniqlash"""
-            while True:
-                if not frame_queue.empty():
-                    frame = frame_queue.get()
-                    if frame is None:
-                        break
-                    
-                    # Kichikroq rasmda ishlash
-                    small = cv2.resize(frame, (0, 0), fx=self.resize_scale, fy=self.resize_scale)
-                    embedding, face_area = self.get_embedding(small)
-                    
-                    if embedding is not None:
-                        name, conf, dist = self.find_person(embedding)
-                        
-                        # Koordinatalarni katta rasmga moslashtirish
-                        if face_area:
-                            scale = 1 / self.resize_scale
-                            box = (
-                                int(face_area['x'] * scale),
-                                int(face_area['y'] * scale),
-                                int(face_area['w'] * scale),
-                                int(face_area['h'] * scale)
-                            )
-                        else:
-                            box = None
-                        
-                        if not result_queue.full():
-                            result_queue.put({
-                                'name': name,
-                                'confidence': conf,
-                                'box': box
-                            })
-        
-        # Threadni boshlash
-        process_thread = Thread(target=process_frame, daemon=True)
-        process_thread.start()
-        
-        fps_time = time.time()
-        fps = 0
+        current_name = None
+        current_conf = 0
+        skip = 0
         
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
             
-            frame_count += 1
             display = frame.copy()
             
-            # FPS hisoblash
-            if time.time() - fps_time >= 1:
-                fps = frame_count
-                frame_count = 0
-                fps_time = time.time()
-            
-            # Har N kadrda frameni yuborish
-            if frame_count % process_every == 0:
-                if frame_queue.empty():
-                    frame_queue.put(frame.copy())
-            
-            # Natijani olish
-            if not result_queue.empty():
-                current_result = result_queue.get()
-            
-            # Tez yuz aniqlash (faqat ramka uchun)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(80, 80))
-            
-            for (x, y, w, h) in faces:
-                if current_result['name']:
-                    color = (0, 255, 0)  # Yashil
-                    name = current_result['name']
-                    conf = current_result['confidence']
-                    text = f"{name} ({conf:.0f}%)"
+            # Har 10 kadrda aniqlash
+            skip += 1
+            if skip >= 10:
+                skip = 0
+                emb = self.get_embedding(frame)
+                if emb is not None:
+                    name, conf = self.find_person(emb)
+                    current_name = name
+                    current_conf = conf
                 else:
-                    color = (0, 0, 255)  # Qizil
-                    text = "Notanish"
-                
-                cv2.rectangle(display, (x, y), (x+w, y+h), color, 2)
-                
-                # Matn foni
-                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-                cv2.rectangle(display, (x, y-30), (x+tw+10, y), color, -1)
-                cv2.putText(display, text, (x+5, y-8),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    current_name = None
             
-            # Info
-            cv2.putText(display, f"FPS: {fps}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(display, "Q - chiqish", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Natijani ko'rsatish
+            if current_name:
+                text = f"{current_name} ({current_conf:.0f}%)"
+                color = (0, 255, 0)
+            else:
+                text = "Notanish"
+                color = (0, 0, 255)
             
-            cv2.imshow("Yuz aniqlash (Optimallashtirilgan)", display)
+            # Katta matn yuqorida
+            cv2.rectangle(display, (0, 0), (400, 80), color, -1)
+            cv2.putText(display, text, (20, 55),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+            
+            cv2.imshow("Yuz aniqlash", display)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
         
-        # Threadni to'xtatish
-        frame_queue.put(None)
         cap.release()
         cv2.destroyAllWindows()
     
     def list_persons(self):
-        """Ro'yxat"""
+        """Odamlar ro'yxati"""
         if self.embeddings:
-            print("\n=== Datasetdagi odamlar ===")
-            for name, emb_list in self.embeddings.items():
-                print(f"  {name}: {len(emb_list)} ta embedding")
+            print("\n--- Odamlar ---")
+            for name in self.embeddings:
+                print(f"  • {name}")
         else:
-            print("\nDataset bo'sh!")
-        return list(self.embeddings.keys())
+            print("\nBo'sh!")
     
     def delete_person(self, name):
         """O'chirish"""
@@ -305,81 +190,44 @@ class FastFaceRecognizer:
         if name in self.embeddings:
             del self.embeddings[name]
             self.save_embeddings()
-            
-            person_path = os.path.join(self.dataset_path, name)
-            if os.path.exists(person_path):
-                shutil.rmtree(person_path)
-            
-            print(f"'{name}' o'chirildi!")
-            return True
-        print(f"'{name}' topilmadi!")
-        return False
-    
-    def rebuild_embeddings(self):
-        """Barcha rasmlardan embeddinglarni qayta hisoblash"""
-        print("\nEmbeddinglar qayta hisoblanmoqda...")
-        self.embeddings = {}
-        
-        for name in os.listdir(self.dataset_path):
-            person_path = os.path.join(self.dataset_path, name)
-            if os.path.isdir(person_path) and name != "__pycache__":
-                emb_list = []
-                for img_name in os.listdir(person_path):
-                    if img_name.endswith(('.jpg', '.jpeg', '.png')):
-                        img_path = os.path.join(person_path, img_name)
-                        emb, _ = self.get_embedding(img_path)
-                        if emb is not None:
-                            emb_list.append(emb)
-                
-                if emb_list:
-                    self.embeddings[name] = emb_list
-                    print(f"  {name}: {len(emb_list)} ta embedding")
-        
-        self.save_embeddings()
-        print("Tayyor!")
+            path = os.path.join(self.dataset_path, name)
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            print(f"✓ {name} o'chirildi")
+        else:
+            print("✗ Topilmadi")
 
 
 def main():
-    print("=" * 50)
-    print("  TEZKOR YUZ ANIQLASH TIZIMI")
-    print("=" * 50)
+    print("\n" + "="*40)
+    print("   YUZ ANIQLASH TIZIMI")
+    print("="*40)
     
-    recognizer = FastFaceRecognizer("./dataset")
+    fr = FaceRecognizer("./dataset")
     
     while True:
-        print("\n" + "-" * 40)
-        print("1. Yangi odam qo'shish")
-        print("2. Real vaqtda aniqlash")
-        print("3. Odamlar ro'yxati")
-        print("4. Odamni o'chirish")
-        print("5. Embeddinglarni qayta hisoblash")
-        print("6. Chiqish")
-        print("-" * 40)
+        print("\n1. Odam qo'shish")
+        print("2. Aniqlash")
+        print("3. Ro'yxat")
+        print("4. O'chirish")
+        print("5. Chiqish")
         
-        tanlov = input("Tanlang (1-6): ").strip()
+        t = input("\n> ").strip()
         
-        if tanlov == "1":
+        if t == "1":
             name = input("Ism: ").strip()
             if name:
-                recognizer.add_person(name)
-        
-        elif tanlov == "2":
-            recognizer.recognize_realtime()
-        
-        elif tanlov == "3":
-            recognizer.list_persons()
-        
-        elif tanlov == "4":
-            recognizer.list_persons()
-            name = input("O'chirish uchun ism: ").strip()
+                fr.add_person(name)
+        elif t == "2":
+            fr.recognize()
+        elif t == "3":
+            fr.list_persons()
+        elif t == "4":
+            fr.list_persons()
+            name = input("Ism: ").strip()
             if name:
-                recognizer.delete_person(name)
-        
-        elif tanlov == "5":
-            recognizer.rebuild_embeddings()
-        
-        elif tanlov == "6":
-            print("Xayr!")
+                fr.delete_person(name)
+        elif t == "5":
             break
 
 
